@@ -516,9 +516,9 @@ impl FuseTable {
         }
         let new_segments: Vec<_> = segments_editor.into_values().collect();
 
-        let chunk_size = 1600;
         let operator = self.operator.clone();
-        let num_threads = 16;
+        let num_threads = ctx.get_settings().get_max_threads()? as usize;
+        let chunk_size = ctx.get_settings().get_max_storage_io_requests()? as usize;
         let mut num_segments_processed = 0;
         let mut stats_acc = FuseStatistics::default();
         let root_segments_len = new_segments.len();
