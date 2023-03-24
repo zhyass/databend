@@ -336,7 +336,7 @@ impl FuseTable {
         Ok(())
     }
 
-    pub async fn check_segment(&self) -> Result<()> {
+    pub async fn check_segment(&self, ctx: Arc<dyn TableContext>) -> Result<()> {
         let root_snapshot = self.read_table_snapshot().await?;
         if root_snapshot.is_none() {
             eprintln!("empty table, quit");
@@ -476,7 +476,17 @@ impl FuseTable {
         let mut new_snapshot = TableSnapshot::from_previous(&root_snapshot);
         new_snapshot.segments = segments.into_iter().cloned().collect();
         new_snapshot.summary = stats_acc;
-        Ok(())
+
+        FuseTable::commit_to_meta_server(
+            ctx.as_ref(),
+            &self.table_info,
+            &self.meta_location_generator,
+            new_snapshot,
+            None,
+            &None,
+            &self.operator,
+        )
+        .await
     }
 
     pub async fn check_snapshot(&self, snapshot: Arc<TableSnapshot>) -> Result<()> {
