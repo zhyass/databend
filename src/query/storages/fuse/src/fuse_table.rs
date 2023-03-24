@@ -543,7 +543,10 @@ impl FuseTable {
             );
         }
 
-        eprintln!("new segments: {:?}", new_segments);
+        eprintln!(
+            "new segments: {:?}",
+            serde_json::to_string_pretty(&new_segments)
+        );
         eprintln!(
             "statistic of new :\n {}",
             serde_json::to_string_pretty(&stats_acc)?
