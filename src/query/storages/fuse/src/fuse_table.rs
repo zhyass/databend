@@ -393,12 +393,16 @@ impl FuseTable {
             self.meta_location_generator().clone(),
         );
 
+        let mut num_snapshots_processed = 1;
         // base duplicate segments set.
         let mut base_dup_segments: HashSet<Location> = root_dup_segments.keys().cloned().collect();
         // 丢失并被找回的segment集合。key是其在root snapshot的segment中的index，value为location。
         let mut lost_segments: HashMap<usize, Location> =
             HashMap::with_capacity(base_dup_segments.len());
         while let Some(current_snapshot) = snapshot_stream.try_next().await? {
+            eprintln!("processing snapshots {}", num_snapshots_processed);
+            num_snapshots_processed += 1;
+
             // 当前snapshot的segments。是base_segments的prev snapshot的segments集合。
             let current_segments = current_snapshot.segments.clone();
             let current_segments_len = current_segments.len();
@@ -482,23 +486,36 @@ impl FuseTable {
             base_segments = current_segments;
         }
 
-        // 校验是否全部找回。
-        assert_eq!(lost_segments.len(), root_dup_segments.len());
         eprintln!("lost_segments: {:?}", lost_segments);
+        // 校验是否全部找回。
+        if lost_segments.len() != root_dup_segments.len() {
+            eprintln!(
+                "error: cannot find all of the lost segments, purge may have been executed during the period. lost:'{}', find:'{}'.",
+                root_dup_segments.len(),
+                lost_segments.len()
+            );
+            return Err(ErrorCode::Internal(format!(
+                "error: cannot find all of the lost segments, lost:'{}', find:'{}'",
+                root_dup_segments.len(),
+                lost_segments.len()
+            )));
+        }
 
         // 基于root segments构造新的segment和snapshot。
-        let segments = &root_snapshot.segments;
-        let mut segments_editor = BTreeMap::<_, _>::from_iter(segments.iter().enumerate());
+        let root_segments = &root_snapshot.segments;
+        let mut segments_editor = BTreeMap::<_, _>::from_iter(root_segments.iter().enumerate());
         for (seg_idx, location) in lost_segments.iter() {
             segments_editor.insert(*seg_idx, location);
         }
-        let segments: Vec<_> = segments_editor.into_values().collect();
+        let new_segments: Vec<_> = segments_editor.into_values().collect();
 
-        let chunk_size = 5000;
+        let chunk_size = 1600;
         let operator = self.operator.clone();
         let num_threads = 16;
+        let mut num_segments_processed = 0;
         let mut stats_acc = FuseStatistics::default();
-        for chunk in segments.chunks(chunk_size) {
+        let root_segments_len = new_segments.len();
+        for chunk in new_segments.chunks(chunk_size) {
             let segment_infos = read_segments(
                 &operator,
                 num_threads,
@@ -508,19 +525,25 @@ impl FuseTable {
             )
             .await?;
 
+            num_segments_processed += segment_infos.len();
+
             for maybe_seg in segment_infos {
                 let seg = maybe_seg?;
                 merge_statistics_mut(&mut stats_acc, &seg.summary)?;
             }
+            eprintln!(
+                "processing segments {}/{}",
+                num_segments_processed, root_segments_len
+            );
         }
 
-        eprintln!("segments: {:?}", segments);
+        eprintln!("new segments: {:?}", new_segments);
         eprintln!(
             "statistic of new :\n {}",
             serde_json::to_string_pretty(&stats_acc)?
         );
         let mut new_snapshot = TableSnapshot::from_previous(&root_snapshot);
-        new_snapshot.segments = segments.into_iter().cloned().collect();
+        new_snapshot.segments = new_segments.into_iter().cloned().collect();
         new_snapshot.summary = stats_acc;
 
         // commit to meta server.
