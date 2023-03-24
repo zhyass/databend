@@ -54,6 +54,7 @@ use serfig::parsers::Toml;
 use super::inner;
 use super::inner::CatalogConfig as InnerCatalogConfig;
 use super::inner::CatalogHiveConfig as InnerCatalogHiveConfig;
+use super::inner::CheckConfig as InnerCheckConfig;
 use super::inner::InnerConfig;
 use super::inner::LocalConfig as InnerLocalConfig;
 use super::inner::MetaConfig as InnerMetaConfig;
@@ -114,6 +115,10 @@ pub struct Config {
     // Local query config.
     #[clap(flatten)]
     pub local: LocalConfig,
+
+    // Local integrity check config.
+    #[clap(flatten)]
+    pub check: CheckConfig,
 
     // cache configs
     #[clap(flatten)]
@@ -1819,11 +1824,37 @@ impl Default for LocalConfig {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Args)]
+#[serde(default)]
+pub struct CheckConfig {
+    // sql to run
+    #[clap(long = "check-db", default_value = "")]
+    pub database: String,
+
+    #[clap(long = "check-table", default_value = "")]
+    pub check_table: String,
+}
+
+impl Default for CheckConfig {
+    fn default() -> Self {
+        InnerCheckConfig::default().into()
+    }
+}
+
 impl From<InnerLocalConfig> for LocalConfig {
     fn from(inner: InnerLocalConfig) -> Self {
         Self {
             sql: inner.sql,
             table: inner.table,
+        }
+    }
+}
+
+impl From<InnerCheckConfig> for CheckConfig {
+    fn from(inner: InnerCheckConfig) -> Self {
+        Self {
+            database: inner.database,
+            check_table: inner.table,
         }
     }
 }
@@ -1835,6 +1866,17 @@ impl TryInto<InnerLocalConfig> for LocalConfig {
         Ok(InnerLocalConfig {
             sql: self.sql,
             table: self.table,
+        })
+    }
+}
+
+impl TryInto<InnerCheckConfig> for CheckConfig {
+    type Error = ErrorCode;
+
+    fn try_into(self) -> Result<InnerCheckConfig> {
+        Ok(InnerCheckConfig {
+            database: self.database,
+            table: self.check_table,
         })
     }
 }
@@ -1970,6 +2012,7 @@ mod cache_config_converters {
                 storage: inner.storage.into(),
                 catalog: HiveCatalogConfig::default(),
                 local: inner.local.into(),
+                check: inner.check.into(),
 
                 catalogs: inner
                     .catalogs
@@ -2007,6 +2050,7 @@ mod cache_config_converters {
                 meta: self.meta.try_into()?,
                 storage: self.storage.try_into()?,
                 local: self.local.try_into()?,
+                check: self.check.try_into()?,
                 catalogs,
                 cache: self.cache.try_into()?,
             })

@@ -157,3 +157,39 @@ impl SegmentsIO {
         .await
     }
 }
+
+// Read all segments information from s3 in concurrently.
+#[tracing::instrument(level = "debug", skip_all)]
+pub async fn read_segments(
+    operator: &Operator,
+    threads_nums: usize,
+    permit_nums: usize,
+    schema: TableSchemaRef,
+    segment_locations: &[&Location],
+) -> Result<Vec<Result<Arc<SegmentInfo>>>> {
+    if segment_locations.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // combine all the tasks.
+    let mut iter = segment_locations.iter();
+    let tasks = std::iter::from_fn(move || {
+        if let Some(location) = iter.next() {
+            let location = (*location).clone();
+            Some(
+                SegmentsIO::read_segment(operator.clone(), location, schema.clone())
+                    .instrument(tracing::debug_span!("read_segment")),
+            )
+        } else {
+            None
+        }
+    });
+
+    execute_futures_in_parallel(
+        tasks,
+        threads_nums,
+        permit_nums,
+        "fuse-req-segments-worker".to_owned(),
+    )
+    .await
+}

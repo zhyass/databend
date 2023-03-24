@@ -13,7 +13,9 @@
 //  limitations under the License.
 
 use std::any::Any;
+use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::convert::TryFrom;
 use std::str;
 use std::str::FromStr;
@@ -55,6 +57,7 @@ use opendal::Operator;
 use storages_common_cache::LoadParams;
 use storages_common_table_meta::meta::ClusterKey;
 use storages_common_table_meta::meta::ColumnStatistics as FuseColumnStatistics;
+use storages_common_table_meta::meta::Location;
 use storages_common_table_meta::meta::Statistics as FuseStatistics;
 use storages_common_table_meta::meta::TableSnapshot;
 use storages_common_table_meta::meta::TableSnapshotStatistics;
@@ -68,11 +71,13 @@ use storages_common_table_meta::table::OPT_KEY_STORAGE_FORMAT;
 use storages_common_table_meta::table::OPT_KEY_TABLE_COMPRESSION;
 use uuid::Uuid;
 
+use crate::io::read_segments;
 use crate::io::MetaReaders;
 use crate::io::TableMetaLocationGenerator;
 use crate::io::WriteSettings;
 use crate::operations::AppendOperationLogEntry;
 use crate::pipelines::Pipeline;
+use crate::statistics::reducers::merge_statistics_mut;
 use crate::table_functions::unwrap_tuple;
 use crate::NavigationPoint;
 use crate::Table;
@@ -314,6 +319,102 @@ impl FuseTable {
 
     pub fn cluster_key_str(&self) -> Option<&String> {
         self.cluster_key_meta.as_ref().map(|(_, key)| key)
+    }
+
+    pub async fn check_integrity(&self) -> Result<()> {
+        let table_snapshot = self.read_table_snapshot().await?;
+
+        if let Some(snapshot) = table_snapshot {
+            self.check_snapshot(snapshot).await?
+        } else {
+            eprintln!("empty table, quit");
+        }
+
+        Ok(())
+    }
+
+    pub async fn check_snapshot(&self, snapshot: Arc<TableSnapshot>) -> Result<()> {
+        // 1 output summary
+        eprintln!(
+            "
+        snapshot id: {}
+        previous snapshot id: {:?}
+        number of row (in summary): {:?}
+        ",
+            snapshot.snapshot_id, snapshot.prev_snapshot_id, snapshot.summary.row_count
+        );
+
+        // 2 checking duplication status
+        eprintln!(
+            "
+        number of segment kept in snapshot: {}
+        ",
+            snapshot.segments.len()
+        );
+
+        let segment_set: HashSet<&Location, RandomState> =
+            HashSet::from_iter(snapshot.segments.iter());
+
+        let segment_set_len = segment_set.len();
+
+        eprintln!(
+            "
+        number of segment after de-duplication: {}, number of duplicated segments {:+}
+        ",
+            segment_set_len,
+            snapshot.segments.len() - segment_set_len
+        );
+
+        // 3 re-calculate the stats based on unique segments and compare it with table summary
+        eprintln!("re-calculate table statistics (based on de-duplicated set of segments...");
+
+        let unique_segs = segment_set.into_iter().collect::<Vec<_>>();
+        let chunk_size = 5000;
+
+        let operator = self.operator.clone();
+        let num_threads = 16;
+
+        let mut num_segments_processed = 0;
+        let mut stats_acc = FuseStatistics::default();
+        for segs in unique_segs.chunks(chunk_size) {
+            let segments = read_segments(
+                &operator,
+                num_threads,
+                chunk_size,
+                self.table_info.schema(),
+                segs,
+            )
+            .await?;
+            for maybe_seg in segments {
+                let seg = maybe_seg?;
+                merge_statistics_mut(&mut stats_acc, &seg.summary)?;
+            }
+            num_segments_processed += segs.len();
+            eprintln!(
+                "processing segments {}/{}",
+                num_segments_processed, segment_set_len
+            );
+        }
+
+        if snapshot.summary == stats_acc {
+            eprintln!("table statistics are equal.");
+        } else {
+            // dump stats
+            eprintln!(
+                "statistic of snapshot:\n {}",
+                serde_json::to_string_pretty(&snapshot.summary)?
+            );
+            eprintln!(
+                "statistic of checker :\n {}",
+                serde_json::to_string_pretty(&stats_acc)?
+            );
+
+            eprintln!("==========================");
+            // show diff
+            similar_asserts::assert_serde_eq!(snapshot.summary, stats_acc);
+        }
+
+        Ok(())
     }
 }
 

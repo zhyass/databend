@@ -50,6 +50,7 @@ parquet-format-safe = "0.2"
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10.6"
+similar-asserts = { version = "1.4.2", features= ["serde"]}
 siphasher = "0.3.10"
 streaming-decompression = "0.1.2"
 tokio-rayon = "2.1.0"

@@ -15,6 +15,7 @@
 #![allow(clippy::uninlined_format_args)]
 #![feature(try_blocks)]
 
+mod integrity;
 mod local;
 
 use std::env;
@@ -339,6 +340,10 @@ async fn run_cmd(conf: &InnerConfig) -> Result<bool> {
         "local" => {
             println!("exec local query: {}", conf.local.sql);
             local::query_local(conf).await?
+        }
+        "check" => {
+            println!("exec check query");
+            integrity::check_integrity(conf).await?
         }
         _ => {
             eprintln!("Invalid cmd: {}", conf.cmd);

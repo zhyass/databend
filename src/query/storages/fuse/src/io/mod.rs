@@ -31,6 +31,7 @@ pub use read::SegmentInfoReader;
 pub use read::SnapshotHistoryReader;
 pub use read::TableSnapshotReader;
 pub use read::UncompressedBuffer;
+pub use segments::read_segments;
 pub use segments::SegmentsIO;
 pub use snapshots::ListSnapshotLiteOption;
 pub use snapshots::SnapshotLiteListExtended;

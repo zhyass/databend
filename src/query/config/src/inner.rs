@@ -54,6 +54,9 @@ pub struct InnerConfig {
     // Local query config.
     pub local: LocalConfig,
 
+    // Integrity Check config
+    pub check: CheckConfig,
+
     // external catalog config.
     // - Later, catalog information SHOULD be kept in KV Service
     // - currently only supports HIVE (via hive meta store)
@@ -409,6 +412,21 @@ impl Default for LocalConfig {
     fn default() -> Self {
         Self {
             sql: "SELECT 1".to_string(),
+            table: "".to_string(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CheckConfig {
+    pub database: String,
+    pub table: String,
+}
+
+impl Default for CheckConfig {
+    fn default() -> Self {
+        Self {
+            database: "".to_string(),
             table: "".to_string(),
         }
     }
