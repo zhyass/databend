@@ -336,7 +336,7 @@ impl FuseTable {
         Ok(())
     }
 
-    pub async fn check_segment(&self, ctx: Arc<dyn TableContext>) -> Result<()> {
+    pub async fn correct_segment(&self, ctx: Arc<dyn TableContext>) -> Result<()> {
         let root_snapshot = self.read_table_snapshot().await?;
         if root_snapshot.is_none() {
             eprintln!("empty table, quit");
@@ -346,6 +346,7 @@ impl FuseTable {
         }
 
         let root_snapshot = root_snapshot.unwrap();
+        // base segments。
         let mut base_segments = root_snapshot.segments.clone();
         let (prev_snapshot_location, prev_snapshot_version) =
             if let Some((id, v)) = root_snapshot.prev_snapshot_id {
@@ -359,26 +360,31 @@ impl FuseTable {
                 return Ok(());
             };
 
-        let mut dup_segments: HashMap<Location, usize> = HashMap::new();
-        let mut segment_locations: HashMap<Location, Vec<usize>> = HashMap::new();
+        // root snapshot中重复的segments, key为segment location, value为 location在base_segments中的index。
+        // 该index是重复segment第一次出现在base_segments中的位置。
+        let mut root_dup_segments: HashMap<Location, usize> = HashMap::new();
+        // 记录root snapshot中所有的segment的location和index。
+        let mut root_segment_locations: HashMap<Location, Vec<usize>> = HashMap::new();
         for (idx, location) in root_snapshot.segments.iter().enumerate() {
-            segment_locations
+            root_segment_locations
                 .entry(location.clone())
                 .and_modify(|v| {
+                    // 确保重复的次数为2.若>2，panic。
                     assert_eq!(v.len(), 1);
+                    // 确保重复的segment位置是相邻的.否则panic.
+                    assert_eq!(v[0] + 1, idx);
                     v.push(idx);
-                    dup_segments.insert(location.clone(), v[0]);
+                    root_dup_segments.insert(location.clone(), v[0]);
                 })
                 .or_insert(vec![idx]);
         }
-        drop(segment_locations);
-        if dup_segments.is_empty() {
+        drop(root_segment_locations);
+        if root_dup_segments.is_empty() {
             eprintln!("no duplicate segments found, quit");
             return Ok(());
         }
 
         let reader = MetaReaders::table_snapshot_reader(self.get_operator());
-
         // grab the table history as stream
         // snapshots are order by timestamp DESC.
         let mut snapshot_stream = reader.snapshot_history(
@@ -387,63 +393,103 @@ impl FuseTable {
             self.meta_location_generator().clone(),
         );
 
-        let mut base_segments_set: HashSet<Location> = dup_segments.keys().cloned().collect();
-        let mut dep_map: HashMap<usize, Location> = HashMap::with_capacity(base_segments_set.len());
-        while let Some(snapshot) = snapshot_stream.try_next().await? {
-            let current_segments = snapshot.segments.clone();
+        // base duplicate segments set.
+        let mut base_dup_segments: HashSet<Location> = root_dup_segments.keys().cloned().collect();
+        // 丢失并被找回的segment集合。key是其在root snapshot的segment中的index，value为location。
+        let mut lost_segments: HashMap<usize, Location> =
+            HashMap::with_capacity(base_dup_segments.len());
+        while let Some(current_snapshot) = snapshot_stream.try_next().await? {
+            // 当前snapshot的segments。是base_segments的prev snapshot的segments集合。
+            let current_segments = current_snapshot.segments.clone();
             let current_segments_len = current_segments.len();
 
+            // 如果发现current_segments是base_segments的子集，则说明从current到base只有append操作，可以跳过。
             let base_segments_len = base_segments.len();
             if base_segments_len >= current_segments_len
                 && current_segments[0..current_segments_len]
                     == base_segments[(base_segments_len - current_segments_len)..base_segments_len]
             {
+                // 设置新的base_segments。
                 base_segments = current_segments;
                 continue;
             }
 
-            let mut segment_locations: HashMap<Location, Vec<usize>> = HashMap::new();
-            let mut dup_segments_set = HashSet::new();
+            // 记录当前 snapshot中所有的segment的location和index。
+            let mut current_segment_locations: HashMap<Location, Vec<usize>> = HashMap::new();
+            // 记录当前 snapshot中重复的segment集合，是base_dup_segments的prev snapshot的dup_segments集合。
+            let mut current_dup_segments = HashSet::new();
             for (idx, location) in current_segments.iter().enumerate() {
-                segment_locations
+                current_segment_locations
                     .entry(location.clone())
                     .and_modify(|v| {
+                        // 确保重复的次数为2.若>2，panic。
                         assert_eq!(v.len(), 1);
-                        dup_segments_set.insert(location.clone());
+                        // 确保重复的segment位置是相邻的.否则panic.
+                        assert_eq!(v[0] + 1, idx);
+                        current_dup_segments.insert(location.clone());
                         v.push(idx);
                     })
                     .or_insert(vec![idx]);
             }
 
-            if !dup_segments_set.is_subset(&base_segments_set) {
+            // 检查current_dup_segments是否是base_dup_segments的子集。
+            if !current_dup_segments.is_subset(&base_dup_segments) {
+                eprintln!(
+                    "error: segment set is not subset of base segment set, there are other duplicate segments in the snapshot:'{}', but not in the root snapshot",
+                    current_snapshot.snapshot_id
+                );
                 return Err(ErrorCode::Internal(format!(
                     "segment set is not subset of base segment set, base segment set: {:?}, current segment set: {:?}",
-                    base_segments_set, dup_segments_set
+                    base_dup_segments, current_dup_segments
                 )));
             }
 
-            let diff: HashSet<_> = base_segments_set.difference(&dup_segments_set).collect();
+            // 找到属于base_dup_segments，但不属于current_dup_segments的dup_segments集合。
+            // 这说明重复是在base snapshot中产生的，我们可以根据相邻的原则，找到丢失的segment。
+            let diff: HashSet<_> = base_dup_segments
+                .difference(&current_dup_segments)
+                .collect();
             for location in diff {
-                let pos = segment_locations.get(location).unwrap()[0];
+                // 拿到重复segment在current_segments中的位置。
+                let maybe_indices = current_segment_locations.get(location);
+                let pos = if let Some(indices) = maybe_indices {
+                    indices[0]
+                } else {
+                    eprintln!(
+                        "error: cannot find the segment:'{:?}' in snapshot:'{}'",
+                        location, current_snapshot.snapshot_id
+                    );
+                    return Err(ErrorCode::Internal(format!(
+                        "error: cannot find the segment:'{:?}' in snapshot:'{}'",
+                        location, current_snapshot.snapshot_id
+                    )));
+                };
                 assert!(pos > 0);
-                let key = dup_segments.get(location).unwrap();
-                dep_map.insert(*key, current_segments[pos - 1].clone());
+                // 拿到location在root segments中的index。
+                let key = root_dup_segments.get(location).unwrap();
+                // 丢失的segment的位置在该segment前面，即pos-1.将其写到lost_segments中。
+                lost_segments.insert(*key, current_segments[pos - 1].clone());
             }
 
-            if dup_segments_set.is_empty() {
-                assert_eq!(dep_map.len(), dup_segments.len());
+            // 如果current_dup_segments为空，则说明所有丢失的segment已经找到，则返回。
+            if current_dup_segments.is_empty() {
                 break;
             }
 
-            base_segments_set = dup_segments_set;
+            // 游标继续移动。current_dup_segments作为下一个snapshot的base_dup_segments。
+            base_dup_segments = current_dup_segments;
+            // 同上。
             base_segments = current_segments;
         }
 
-        eprintln!("dep_map: {:?}", dep_map);
+        // 校验是否全部找回。
+        assert_eq!(lost_segments.len(), root_dup_segments.len());
+        eprintln!("lost_segments: {:?}", lost_segments);
 
+        // 基于root segments构造新的segment和snapshot。
         let segments = &root_snapshot.segments;
         let mut segments_editor = BTreeMap::<_, _>::from_iter(segments.iter().enumerate());
-        for (seg_idx, location) in dep_map.iter() {
+        for (seg_idx, location) in lost_segments.iter() {
             segments_editor.insert(*seg_idx, location);
         }
         let segments: Vec<_> = segments_editor.into_values().collect();
@@ -477,6 +523,7 @@ impl FuseTable {
         new_snapshot.segments = segments.into_iter().cloned().collect();
         new_snapshot.summary = stats_acc;
 
+        // commit to meta server.
         FuseTable::commit_to_meta_server(
             ctx.as_ref(),
             &self.table_info,

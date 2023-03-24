@@ -50,7 +50,7 @@ pub async fn correct_segment(conf: &InnerConfig) -> Result<()> {
 
         let fuse_table = FuseTable::try_from_table(table.as_ref())?;
 
-        fuse_table.check_segment(ctx).await?;
+        fuse_table.correct_segment(ctx).await?;
     };
 
     res
