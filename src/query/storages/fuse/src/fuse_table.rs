@@ -422,7 +422,7 @@ impl FuseTable {
                 )));
             }
 
-            let diff: HashSet<_> = dup_segments_set.difference(&base_segments_set).collect();
+            let diff: HashSet<_> = base_segments_set.difference(&dup_segments_set).collect();
             for location in diff {
                 let pos = segment_locations.get(location).unwrap()[0];
                 assert!(pos > 0);
