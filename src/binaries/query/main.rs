@@ -15,6 +15,7 @@
 #![allow(clippy::uninlined_format_args)]
 #![feature(try_blocks)]
 
+mod correct_segment;
 mod integrity;
 mod local;
 
@@ -344,6 +345,10 @@ async fn run_cmd(conf: &InnerConfig) -> Result<bool> {
         "check" => {
             println!("exec check query");
             integrity::check_integrity(conf).await?
+        }
+        "correct" => {
+            println!("exec correct query");
+            correct_segment::correct_segment(conf).await?
         }
         _ => {
             eprintln!("Invalid cmd: {}", conf.cmd);

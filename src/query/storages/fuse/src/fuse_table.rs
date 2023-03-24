@@ -14,6 +14,7 @@
 
 use std::any::Any;
 use std::collections::hash_map::RandomState;
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::convert::TryFrom;
@@ -53,6 +54,7 @@ use common_storage::DataOperator;
 use common_storage::ShareTableConfig;
 use common_storage::StorageMetrics;
 use common_storage::StorageMetricsLayer;
+use futures::TryStreamExt;
 use opendal::Operator;
 use storages_common_cache::LoadParams;
 use storages_common_table_meta::meta::ClusterKey;
@@ -73,6 +75,7 @@ use uuid::Uuid;
 
 use crate::io::read_segments;
 use crate::io::MetaReaders;
+use crate::io::SnapshotHistoryReader;
 use crate::io::TableMetaLocationGenerator;
 use crate::io::WriteSettings;
 use crate::operations::AppendOperationLogEntry;
@@ -330,6 +333,149 @@ impl FuseTable {
             eprintln!("empty table, quit");
         }
 
+        Ok(())
+    }
+
+    pub async fn check_segment(&self) -> Result<()> {
+        let root_snapshot = self.read_table_snapshot().await?;
+        if root_snapshot.is_none() {
+            eprintln!("empty table, quit");
+            return Err(ErrorCode::TableHistoricalDataNotFound(
+                "Empty Table has no historical data",
+            ));
+        }
+
+        let root_snapshot = root_snapshot.unwrap();
+        let mut base_segments = root_snapshot.segments.clone();
+        let (prev_snapshot_location, prev_snapshot_version) =
+            if let Some((id, v)) = root_snapshot.prev_snapshot_id {
+                (
+                    self.meta_location_generator
+                        .snapshot_location_from_uuid(&id, v)?,
+                    v,
+                )
+            } else {
+                eprintln!("no previous snapshot found, quit");
+                return Ok(());
+            };
+
+        let mut dup_segments: HashMap<Location, usize> = HashMap::new();
+        let mut segment_locations: HashMap<Location, Vec<usize>> = HashMap::new();
+        for (idx, location) in root_snapshot.segments.iter().enumerate() {
+            segment_locations
+                .entry(location.clone())
+                .and_modify(|v| {
+                    assert_eq!(v.len(), 1);
+                    v.push(idx);
+                    dup_segments.insert(location.clone(), v[0]);
+                })
+                .or_insert(vec![idx]);
+        }
+        drop(segment_locations);
+        if dup_segments.is_empty() {
+            eprintln!("no duplicate segments found, quit");
+            return Ok(());
+        }
+
+        let reader = MetaReaders::table_snapshot_reader(self.get_operator());
+
+        // grab the table history as stream
+        // snapshots are order by timestamp DESC.
+        let mut snapshot_stream = reader.snapshot_history(
+            prev_snapshot_location,
+            prev_snapshot_version,
+            self.meta_location_generator().clone(),
+        );
+
+        let mut base_segments_set: HashSet<Location> = dup_segments.keys().cloned().collect();
+        let mut dep_map: HashMap<usize, Location> = HashMap::with_capacity(base_segments_set.len());
+        while let Some(snapshot) = snapshot_stream.try_next().await? {
+            let current_segments = snapshot.segments.clone();
+            let current_segments_len = current_segments.len();
+
+            let base_segments_len = base_segments.len();
+            if base_segments_len >= current_segments_len
+                && current_segments[0..current_segments_len]
+                    == base_segments[(base_segments_len - current_segments_len)..base_segments_len]
+            {
+                base_segments = current_segments;
+                continue;
+            }
+
+            let mut segment_locations: HashMap<Location, Vec<usize>> = HashMap::new();
+            let mut dup_segments_set = HashSet::new();
+            for (idx, location) in current_segments.iter().enumerate() {
+                segment_locations
+                    .entry(location.clone())
+                    .and_modify(|v| {
+                        assert_eq!(v.len(), 1);
+                        dup_segments_set.insert(location.clone());
+                        v.push(idx);
+                    })
+                    .or_insert(vec![idx]);
+            }
+
+            if !dup_segments_set.is_subset(&base_segments_set) {
+                return Err(ErrorCode::Internal(format!(
+                    "segment set is not subset of base segment set, base segment set: {:?}, current segment set: {:?}",
+                    base_segments_set, dup_segments_set
+                )));
+            }
+
+            let diff: HashSet<_> = dup_segments_set.difference(&base_segments_set).collect();
+            for location in diff {
+                let pos = segment_locations.get(location).unwrap()[0];
+                assert!(pos > 0);
+                let key = dup_segments.get(location).unwrap();
+                dep_map.insert(*key, current_segments[pos - 1].clone());
+            }
+
+            if dup_segments_set.is_empty() {
+                assert_eq!(dep_map.len(), dup_segments.len());
+                break;
+            }
+
+            base_segments_set = dup_segments_set;
+            base_segments = current_segments;
+        }
+
+        eprintln!("dep_map: {:?}", dep_map);
+
+        let segments = &root_snapshot.segments;
+        let mut segments_editor = BTreeMap::<_, _>::from_iter(segments.iter().enumerate());
+        for (seg_idx, location) in dep_map.iter() {
+            segments_editor.insert(*seg_idx, location);
+        }
+        let segments: Vec<_> = segments_editor.into_values().collect();
+
+        let chunk_size = 5000;
+        let operator = self.operator.clone();
+        let num_threads = 16;
+        let mut stats_acc = FuseStatistics::default();
+        for chunk in segments.chunks(chunk_size) {
+            let segment_infos = read_segments(
+                &operator,
+                num_threads,
+                chunk_size,
+                self.table_info.schema(),
+                chunk,
+            )
+            .await?;
+
+            for maybe_seg in segment_infos {
+                let seg = maybe_seg?;
+                merge_statistics_mut(&mut stats_acc, &seg.summary)?;
+            }
+        }
+
+        eprintln!("segments: {:?}", segments);
+        eprintln!(
+            "statistic of new :\n {}",
+            serde_json::to_string_pretty(&stats_acc)?
+        );
+        let mut new_snapshot = TableSnapshot::from_previous(&root_snapshot);
+        new_snapshot.segments = segments.into_iter().cloned().collect();
+        new_snapshot.summary = stats_acc;
         Ok(())
     }
 
