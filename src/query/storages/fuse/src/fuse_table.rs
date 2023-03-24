@@ -383,6 +383,7 @@ impl FuseTable {
             eprintln!("no duplicate segments found, quit");
             return Ok(());
         }
+        eprintln!("all the dup_segments: {:?}", root_dup_segments);
 
         let reader = MetaReaders::table_snapshot_reader(self.get_operator());
         // grab the table history as stream
@@ -400,7 +401,7 @@ impl FuseTable {
         let mut lost_segments: HashMap<usize, Location> =
             HashMap::with_capacity(base_dup_segments.len());
         while let Some(current_snapshot) = snapshot_stream.try_next().await? {
-            eprintln!("processing snapshots {}", num_snapshots_processed);
+            eprintln!("processing num of snapshots {}", num_snapshots_processed);
             num_snapshots_processed += 1;
 
             // 当前snapshot的segments。是base_segments的prev snapshot的segments集合。
@@ -469,10 +470,15 @@ impl FuseTable {
                     )));
                 };
                 assert!(pos > 0);
+                let lost_segment = current_segments[pos - 1].clone();
+                eprintln!(
+                    "find lost segment:{:?} in snapshot_id:{}, match the dup segment:{:?}",
+                    lost_segment, current_snapshot.snapshot_id, location
+                );
                 // 拿到location在root segments中的index。
                 let key = root_dup_segments.get(location).unwrap();
                 // 丢失的segment的位置在该segment前面，即pos-1.将其写到lost_segments中。
-                lost_segments.insert(*key, current_segments[pos - 1].clone());
+                lost_segments.insert(*key, lost_segment);
             }
 
             // 如果current_dup_segments为空，则说明所有丢失的segment已经找到，则返回。
@@ -486,7 +492,7 @@ impl FuseTable {
             base_segments = current_segments;
         }
 
-        eprintln!("lost_segments: {:?}", lost_segments);
+        eprintln!("all the lost_segments: {:?}", lost_segments);
         // 校验是否全部找回。
         if lost_segments.len() != root_dup_segments.len() {
             eprintln!(
