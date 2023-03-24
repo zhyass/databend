@@ -345,6 +345,7 @@ impl FuseTable {
             ));
         }
 
+        eprintln!("processing num of snapshots: 1");
         let root_snapshot = root_snapshot.unwrap();
         // base segments。
         let mut base_segments = root_snapshot.segments.clone();
@@ -394,7 +395,7 @@ impl FuseTable {
             self.meta_location_generator().clone(),
         );
 
-        let mut num_snapshots_processed = 1;
+        let mut num_snapshots_processed = 2;
         // base duplicate segments set.
         let mut base_dup_segments: HashSet<Location> = root_dup_segments.keys().cloned().collect();
         // 丢失并被找回的segment集合。key是其在root snapshot的segment中的index，value为location。
