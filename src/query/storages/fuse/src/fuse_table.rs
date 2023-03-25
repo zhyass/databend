@@ -443,11 +443,11 @@ impl FuseTable {
             // 检查current_dup_segments是否是base_dup_segments的子集。
             if !current_dup_segments.is_subset(&base_dup_segments) {
                 eprintln!(
-                    "error: segment set is not subset of base segment set, there are other duplicate segments in the snapshot:'{}', but not in the root snapshot",
-                    current_snapshot.snapshot_id
+                    "error: current duplicate segments:'{:?}' is not subset of base duplicate segments, there are other duplicate segments in the snapshot:'{}', but not in the root snapshot",
+                    current_dup_segments, current_snapshot.snapshot_id
                 );
                 return Err(ErrorCode::Internal(format!(
-                    "segment set is not subset of base segment set, base segment set: {:?}, current segment set: {:?}",
+                    "current duplicate segments is not subset of base duplicate segments, base_dup_segments: {:?}, current_dup_segments: {:?}",
                     base_dup_segments, current_dup_segments
                 )));
             }
