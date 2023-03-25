@@ -21,6 +21,7 @@ use std::convert::TryFrom;
 use std::str;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Instant;
 
 use common_catalog::catalog::StorageDescription;
 use common_catalog::plan::DataSourcePlan;
@@ -337,6 +338,7 @@ impl FuseTable {
     }
 
     pub async fn correct_segment(&self, ctx: Arc<dyn TableContext>) -> Result<()> {
+        let start = Instant::now();
         let root_snapshot = self.read_table_snapshot().await?;
         if root_snapshot.is_none() {
             eprintln!("empty table, quit");
@@ -480,6 +482,12 @@ impl FuseTable {
                 let key = root_dup_segments.get(location).unwrap();
                 // 丢失的segment的位置在该segment前面，即pos-1.将其写到lost_segments中。
                 lost_segments.insert(*key, lost_segment);
+                eprintln!(
+                    "correct: find lost segment:{}/{}, cost:{} sec",
+                    lost_segments.len(),
+                    root_dup_segments.len(),
+                    start.elapsed().as_secs()
+                );
             }
 
             // 如果current_dup_segments为空，则说明所有丢失的segment已经找到，则返回。
