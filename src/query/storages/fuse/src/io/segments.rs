@@ -63,6 +63,27 @@ impl SegmentsIO {
         reader.read(&load_params).await
     }
 
+    // Read one segment file by location.
+    // The index is the index of the segment_location in segment_locations.
+    async fn read_segment_without_cache(
+        dal: Operator,
+        segment_location: Location,
+        table_schema: TableSchemaRef,
+    ) -> Result<Arc<SegmentInfo>> {
+        let (path, ver) = segment_location;
+        let reader = MetaReaders::segment_info_reader(dal, table_schema);
+
+        // Keep in mind that segment_info_read must need a schema
+        let load_params = LoadParams {
+            location: path,
+            len_hint: None,
+            ver,
+            put_cache: false,
+        };
+
+        reader.read(&load_params).await
+    }
+
     // Read all segments information from s3 in concurrently.
     #[tracing::instrument(level = "debug", skip_all)]
     pub async fn read_segments(
@@ -177,7 +198,7 @@ pub async fn read_segments(
         if let Some(location) = iter.next() {
             let location = (*location).clone();
             Some(
-                SegmentsIO::read_segment(operator.clone(), location, schema.clone())
+                SegmentsIO::read_segment_without_cache(operator.clone(), location, schema.clone())
                     .instrument(tracing::debug_span!("read_segment")),
             )
         } else {
