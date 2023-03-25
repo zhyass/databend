@@ -346,8 +346,8 @@ async fn run_cmd(conf: &InnerConfig) -> Result<bool> {
             println!("exec check query");
             integrity::check_integrity(conf).await?
         }
-        "correct" => {
-            println!("exec correct query");
+        "fix" => {
+            println!("exec fix query");
             correct_segment::correct_segment(conf).await?
         }
         _ => {

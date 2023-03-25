@@ -483,7 +483,7 @@ impl FuseTable {
                 // 丢失的segment的位置在该segment前面，即pos-1.将其写到lost_segments中。
                 lost_segments.insert(*key, lost_segment);
                 eprintln!(
-                    "correct: find lost segment:{}/{}, cost:{} sec",
+                    "fix: find lost segment:{}/{}, cost:{} sec",
                     lost_segments.len(),
                     root_dup_segments.len(),
                     start.elapsed().as_secs()
@@ -574,7 +574,9 @@ impl FuseTable {
             &None,
             &self.operator,
         )
-        .await
+        .await?;
+        eprintln!("fix success, please check your snapshot");
+        Ok(())
     }
 
     pub async fn check_snapshot(&self, snapshot: Arc<TableSnapshot>) -> Result<()> {
