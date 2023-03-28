@@ -337,7 +337,12 @@ impl FuseTable {
         Ok(())
     }
 
-    pub async fn correct_segment(&self, ctx: Arc<dyn TableContext>) -> Result<()> {
+    pub async fn correct_segment(
+        &self,
+        ctx: Arc<dyn TableContext>,
+        enable_commit: bool,
+        ignore_undetect_segment: bool,
+    ) -> Result<()> {
         let start = Instant::now();
         let root_snapshot = self.read_table_snapshot().await?;
         if root_snapshot.is_none() {
@@ -502,8 +507,9 @@ impl FuseTable {
         }
 
         eprintln!("all the lost_segments: {:?}", lost_segments);
-        // 校验是否全部找回。
-        if lost_segments.len() != root_dup_segments.len() {
+        // 校验是否全部找回。如果长度不一致，则说明有segment已经被清理，无法找回。
+        // 如果 ignore_undetect_segment 为 false，直接返回错误。
+        if !ignore_undetect_segment && lost_segments.len() != root_dup_segments.len() {
             eprintln!(
                 "error: cannot find all of the lost segments, purge may have been executed during the period. lost:'{}', find:'{}'.",
                 root_dup_segments.len(),
@@ -516,12 +522,23 @@ impl FuseTable {
             )));
         }
 
+        let mut undetect_dup_segments_idx: HashSet<_> = root_dup_segments.values().collect();
         // 基于root segments构造新的segment和snapshot。
         let root_segments = &root_snapshot.segments;
         let mut segments_editor = BTreeMap::<_, _>::from_iter(root_segments.iter().enumerate());
         for (seg_idx, location) in lost_segments.iter() {
             segments_editor.insert(*seg_idx, location);
+            undetect_dup_segments_idx.remove(seg_idx);
         }
+
+        if !undetect_dup_segments_idx.is_empty() {
+            eprintln!("warning: there is undetected segments and it will be de-duplicated.",);
+        }
+        // 如果undetect_dup_segments_idx不为空，选择对重复的segment做去重，将会导致部分数据缺失。
+        for seg_idx in undetect_dup_segments_idx {
+            segments_editor.remove(seg_idx);
+        }
+
         let new_segments: Vec<_> = segments_editor.into_values().collect();
 
         let operator = self.operator.clone();
@@ -552,30 +569,29 @@ impl FuseTable {
             );
         }
 
-        eprintln!(
-            "new segments :\n {}",
-            serde_json::to_string_pretty(&new_segments)?
-        );
-        eprintln!(
-            "statistic of new :\n {}",
-            serde_json::to_string_pretty(&stats_acc)?
-        );
         let mut new_snapshot = TableSnapshot::from_previous(&root_snapshot);
         new_snapshot.segments = new_segments.into_iter().cloned().collect();
         new_snapshot.summary = stats_acc;
+        eprintln!(
+            "new snapshot:\n {}",
+            serde_json::to_string_pretty(&new_snapshot)?
+        );
 
-        // commit to meta server.
-        FuseTable::commit_to_meta_server(
-            ctx.as_ref(),
-            &self.table_info,
-            &self.meta_location_generator,
-            new_snapshot,
-            None,
-            &None,
-            &self.operator,
-        )
-        .await?;
-        eprintln!("fix success, please check your snapshot");
+        if enable_commit {
+            // commit to meta server.
+            FuseTable::commit_to_meta_server(
+                ctx.as_ref(),
+                &self.table_info,
+                &self.meta_location_generator,
+                new_snapshot,
+                None,
+                &None,
+                &self.operator,
+            )
+            .await?;
+            eprintln!("fix success, please check your snapshot");
+        }
+
         Ok(())
     }
 

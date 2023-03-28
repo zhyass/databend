@@ -28,6 +28,8 @@ pub async fn correct_segment(conf: &InnerConfig) -> Result<()> {
     };
 
     let table = &conf.check.table;
+    let enable_commit = conf.check.enable_commit;
+    let ignore_undetect_segment = conf.check.ignore_undetect_segment;
 
     let mut conf = conf.clone();
     conf.storage.allow_insecure = true;
@@ -50,7 +52,9 @@ pub async fn correct_segment(conf: &InnerConfig) -> Result<()> {
 
         let fuse_table = FuseTable::try_from_table(table.as_ref())?;
 
-        fuse_table.correct_segment(ctx).await?;
+        fuse_table
+            .correct_segment(ctx, enable_commit, ignore_undetect_segment)
+            .await?;
     };
 
     res
