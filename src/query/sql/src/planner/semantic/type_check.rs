@@ -35,6 +35,7 @@ use common_ast::parser::parse_expr;
 use common_ast::parser::tokenize_sql;
 use common_catalog::catalog::CatalogManager;
 use common_catalog::table_context::TableContext;
+use common_config::GlobalConfig;
 use common_exception::ErrorCode;
 use common_exception::Result;
 use common_exception::Span;
@@ -57,6 +58,7 @@ use common_functions::aggregates::AggregateFunctionFactory;
 use common_functions::is_builtin_function;
 use common_functions::BUILTIN_FUNCTIONS;
 use common_users::UserApiProvider;
+use simsearch::SimSearch;
 
 use super::name_resolution::NameResolutionContext;
 use super::normalize_identifier;
@@ -84,6 +86,7 @@ use crate::plans::WindowFunc;
 use crate::plans::WindowFuncFrame;
 use crate::plans::WindowFuncFrameBound;
 use crate::plans::WindowFuncFrameUnits;
+use crate::plans::WindowOrderBy;
 use crate::BaseTableColumn;
 use crate::BindContext;
 use crate::ColumnBinding;
@@ -584,14 +587,49 @@ impl<'a> TypeChecker<'a> {
                 if !is_builtin_function(func_name)
                     && !Self::all_rewritable_scalar_function().contains(&func_name)
                 {
-                    return self.resolve_udf(*span, func_name, args).await;
+                    if let Some(udf) = self.resolve_udf(*span, func_name, args).await? {
+                        return Ok(udf);
+                    } else {
+                        // Function not found, try to find and suggest similar function name.
+                        let all_funcs = BUILTIN_FUNCTIONS
+                            .all_function_names()
+                            .into_iter()
+                            .chain(AggregateFunctionFactory::instance().registered_names())
+                            .chain(
+                                Self::all_rewritable_scalar_function()
+                                    .iter()
+                                    .cloned()
+                                    .map(str::to_string),
+                            );
+                        let mut engine: SimSearch<String> = SimSearch::new();
+                        for func_name in all_funcs {
+                            engine.insert(func_name.clone(), &func_name);
+                        }
+                        let possible_funcs = engine
+                            .search(func_name)
+                            .iter()
+                            .map(|name| format!("'{name}'"))
+                            .collect::<Vec<_>>();
+                        if possible_funcs.is_empty() {
+                            return Err(ErrorCode::UnknownFunction(format!(
+                                "no function matches the given name: {func_name}"
+                            ))
+                            .set_span(*span));
+                        } else {
+                            return Err(ErrorCode::UnknownFunction(format!(
+                                "no function matches the given name: '{func_name}', do you mean {}?",
+                                possible_funcs.join(", ")
+                            ))
+                            .set_span(*span));
+                        }
+                    }
                 }
 
                 let args: Vec<&Expr> = args.iter().collect();
 
+                // Check assumptions if it is a set returning function
                 if BUILTIN_FUNCTIONS
-                    .properties
-                    .get(&name.name.to_lowercase())
+                    .get_property(&name.name)
                     .map(|property| property.kind == FunctionKind::SRF)
                     .unwrap_or(false)
                 {
@@ -685,10 +723,20 @@ impl<'a> TypeChecker<'a> {
                             let box (part, _part_type) = self.resolve(p).await?;
                             partitions.push(part);
                         }
+                        let mut order_bys = vec![];
+                        for o in window.order_by.iter() {
+                            let box (order, _) = self.resolve(&o.expr).await?;
+                            order_bys.push(WindowOrderBy {
+                                expr: order,
+                                asc: o.asc,
+                                nulls_first: o.nulls_first,
+                            })
+                        }
                         self.resolve_window(
                             *span,
                             new_agg_func.clone(),
                             partitions,
+                            order_bys,
                             window.window_frame.clone(),
                             data_type.clone(),
                         )
@@ -907,61 +955,129 @@ impl<'a> TypeChecker<'a> {
         _span: Span,
         agg_func: AggregateFunction,
         partitions: Vec<ScalarExpr>,
+        order_bys: Vec<WindowOrderBy>,
         window_frame: Option<WindowFrame>,
         return_type: DataType,
     ) -> Result<Box<(ScalarExpr, DataType)>> {
-        let frame = window_frame.unwrap();
-        let units = match frame.units.clone() {
-            WindowFrameUnits::Rows => WindowFuncFrameUnits::Rows,
-            WindowFrameUnits::Range => WindowFuncFrameUnits::Range,
-        };
-        let start = match frame.start_bound {
-            WindowFrameBound::CurrentRow => WindowFuncFrameBound::CurrentRow,
-            WindowFrameBound::Preceding(f) => {
-                if let Some(box expr) = f {
-                    let box (result_expr, _) = self.resolve(&expr).await?;
-                    WindowFuncFrameBound::Preceding(Some(Box::new(result_expr)))
-                } else {
-                    WindowFuncFrameBound::Preceding(None)
+        let (units, start, end) = if let Some(frame) = window_frame {
+            let units = match frame.units {
+                WindowFrameUnits::Rows => WindowFuncFrameUnits::Rows,
+                WindowFrameUnits::Range => WindowFuncFrameUnits::Range,
+            };
+            let start = match frame.start_bound {
+                WindowFrameBound::CurrentRow => WindowFuncFrameBound::CurrentRow,
+                WindowFrameBound::Preceding(f) => {
+                    if let Some(box expr) = f {
+                        let result = Self::resolve_window_frame(&expr);
+                        WindowFuncFrameBound::Preceding(result)
+                    } else {
+                        WindowFuncFrameBound::Preceding(None)
+                    }
                 }
-            }
-            WindowFrameBound::Following(f) => {
-                if let Some(box expr) = f {
-                    let box (result_expr, _) = self.resolve(&expr).await?;
-                    WindowFuncFrameBound::Following(Some(Box::new(result_expr)))
-                } else {
-                    WindowFuncFrameBound::Following(None)
+                WindowFrameBound::Following(f) => {
+                    if let Some(box expr) = f {
+                        let result = Self::resolve_window_frame(&expr);
+                        WindowFuncFrameBound::Following(result)
+                    } else {
+                        WindowFuncFrameBound::Following(None)
+                    }
                 }
-            }
+            };
+
+            let end = match frame.end_bound {
+                WindowFrameBound::CurrentRow => WindowFuncFrameBound::CurrentRow,
+                WindowFrameBound::Preceding(f) => {
+                    if let Some(box expr) = f {
+                        let result = Self::resolve_window_frame(&expr);
+                        WindowFuncFrameBound::Preceding(result)
+                    } else {
+                        WindowFuncFrameBound::Preceding(None)
+                    }
+                }
+                WindowFrameBound::Following(f) => {
+                    if let Some(box expr) = f {
+                        let result = Self::resolve_window_frame(&expr);
+                        WindowFuncFrameBound::Following(result)
+                    } else {
+                        WindowFuncFrameBound::Following(None)
+                    }
+                }
+            };
+            (units, start, end)
+        } else {
+            let units = WindowFuncFrameUnits::Rows;
+            let start = WindowFuncFrameBound::Preceding(None);
+            let end = WindowFuncFrameBound::CurrentRow;
+            (units, start, end)
         };
 
-        let end = match frame.end_bound {
-            WindowFrameBound::CurrentRow => WindowFuncFrameBound::CurrentRow,
-            WindowFrameBound::Preceding(f) => {
-                if let Some(box expr) = f {
-                    let box (result_expr, _) = self.resolve(&expr).await?;
-                    WindowFuncFrameBound::Preceding(Some(Box::new(result_expr)))
-                } else {
-                    WindowFuncFrameBound::Preceding(None)
-                }
-            }
-            WindowFrameBound::Following(f) => {
-                if let Some(box expr) = f {
-                    let box (result_expr, _) = self.resolve(&expr).await?;
-                    WindowFuncFrameBound::Following(Some(Box::new(result_expr)))
-                } else {
-                    WindowFuncFrameBound::Following(None)
-                }
-            }
-        };
+        Self::check_frame_bound(start.clone(), end.clone())?;
 
         let window_func = WindowFunc {
             agg_func,
             partition_by: partitions,
-            frame: WindowFuncFrame { units, start, end },
+            order_by: order_bys,
+            frame: WindowFuncFrame {
+                units,
+                start_bound: start,
+                end_bound: end,
+            },
         };
 
         Ok(Box::new((window_func.into(), return_type)))
+    }
+
+    // just support integer
+    pub fn resolve_window_frame(expr: &Expr) -> Option<usize> {
+        match expr {
+            Expr::Literal {
+                lit: Literal::UInt64(value),
+                ..
+            } => Some(*value as usize),
+            _ => None,
+        }
+    }
+
+    fn check_frame_bound(start: WindowFuncFrameBound, end: WindowFuncFrameBound) -> Result<()> {
+        match start {
+            WindowFuncFrameBound::CurrentRow => {
+                if start > end {
+                    return Err(ErrorCode::SemanticError(format!(
+                        "frame semantic error, start:{:?}, end:{:?}",
+                        start, end
+                    )));
+                }
+            }
+            _ => {
+                if start >= end {
+                    return Err(ErrorCode::SemanticError(format!(
+                        "frame semantic error, start:{:?}, end:{:?}",
+                        start, end
+                    )));
+                }
+            }
+        }
+
+        match end {
+            WindowFuncFrameBound::CurrentRow => {
+                if start > end {
+                    return Err(ErrorCode::SemanticError(format!(
+                        "frame semantic error, start:{:?}, end:{:?}",
+                        start, end
+                    )));
+                }
+            }
+            _ => {
+                if start >= end {
+                    return Err(ErrorCode::SemanticError(format!(
+                        "frame semantic error, start:{:?}, end:{:?}",
+                        start, end
+                    )));
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Resolve function call.
@@ -1437,6 +1553,7 @@ impl<'a> TypeChecker<'a> {
             "is_null",
             "coalesce",
             "last_query_id",
+            "ai_embedding_vector",
         ]
     }
 
@@ -1634,6 +1751,28 @@ impl<'a> TypeChecker<'a> {
                     Err(e) => Err(e),
                 })
             }
+            ("ai_embedding_vector", args) => {
+                // ai_embedding_vector(prompt) -> embedding_vector(prompt, api_key)
+                if args.len() != 1 {
+                    return Some(Err(ErrorCode::BadArguments(
+                        "ai_embedding_vector(STRING) only accepts one STRING argument",
+                    )
+                    .set_span(span)));
+                }
+
+                // Prompt.
+                let arg1 = args[0];
+                // API key.
+                let arg2 = &Expr::Literal {
+                    span,
+                    lit: Literal::String(GlobalConfig::instance().query.openai_api_key.clone()),
+                };
+
+                Some(
+                    self.resolve_function(span, "embedding_vector", vec![], &[arg1, arg2])
+                        .await,
+                )
+            }
             _ => None,
         }
     }
@@ -1813,47 +1952,48 @@ impl<'a> TypeChecker<'a> {
         span: Span,
         func_name: &str,
         arguments: &[Expr],
-    ) -> Result<Box<(ScalarExpr, DataType)>> {
+    ) -> Result<Option<Box<(ScalarExpr, DataType)>>> {
         let udf = UserApiProvider::instance()
             .get_udf(self.ctx.get_tenant().as_str(), func_name)
             .await;
-        if let Ok(udf) = udf {
-            let parameters = udf.parameters;
-            if parameters.len() != arguments.len() {
-                return Err(ErrorCode::SyntaxException(format!(
-                    "Require {} parameters, but got: {}",
-                    parameters.len(),
-                    arguments.len()
-                ))
-                .set_span(span));
-            }
-            let settings = self.ctx.get_settings();
-            let sql_dialect = settings.get_sql_dialect()?;
-            let sql_tokens = tokenize_sql(udf.definition.as_str())?;
-            let expr = parse_expr(&sql_tokens, sql_dialect)?;
-            let mut args_map = HashMap::new();
-            arguments.iter().enumerate().for_each(|(idx, argument)| {
-                if let Some(parameter) = parameters.get(idx) {
-                    args_map.insert(parameter, (*argument).clone());
-                }
-            });
-            let udf_expr = self
-                .clone_expr_with_replacement(&expr, &|nest_expr| {
-                    if let Expr::ColumnRef { column, .. } = nest_expr {
-                        if let Some(arg) = args_map.get(&column.name) {
-                            return Ok(Some(arg.clone()));
-                        }
-                    }
-                    Ok(None)
-                })
-                .map_err(|e| e.set_span(span))?;
-            self.resolve(&udf_expr).await
+
+        let udf = if let Ok(udf) = udf {
+            udf
         } else {
-            Err(ErrorCode::UnknownFunction(format!(
-                "no function matches the given name: {func_name}"
+            return Ok(None);
+        };
+
+        let parameters = udf.parameters;
+        if parameters.len() != arguments.len() {
+            return Err(ErrorCode::SyntaxException(format!(
+                "Require {} parameters, but got: {}",
+                parameters.len(),
+                arguments.len()
             ))
-            .set_span(span))
+            .set_span(span));
         }
+        let settings = self.ctx.get_settings();
+        let sql_dialect = settings.get_sql_dialect()?;
+        let sql_tokens = tokenize_sql(udf.definition.as_str())?;
+        let expr = parse_expr(&sql_tokens, sql_dialect)?;
+        let mut args_map = HashMap::new();
+        arguments.iter().enumerate().for_each(|(idx, argument)| {
+            if let Some(parameter) = parameters.get(idx) {
+                args_map.insert(parameter, (*argument).clone());
+            }
+        });
+        let udf_expr = self
+            .clone_expr_with_replacement(&expr, &|nest_expr| {
+                if let Expr::ColumnRef { column, .. } = nest_expr {
+                    if let Some(arg) = args_map.get(&column.name) {
+                        return Ok(Some(arg.clone()));
+                    }
+                }
+                Ok(None)
+            })
+            .map_err(|e| e.set_span(span))?;
+
+        Ok(Some(self.resolve(&udf_expr).await?))
     }
 
     #[async_recursion::async_recursion]

@@ -754,6 +754,11 @@ impl<'ast> Visitor<'ast> for AstFormatVisitor {
         let size_limit_node = FormatTreeNode::new(size_limit_format_ctx);
         children.push(size_limit_node);
 
+        let max_files_name = format!("MaxFiles {}", copy.max_files);
+        let max_files_format_ctx = AstFormatContext::new(max_files_name);
+        let max_files_node = FormatTreeNode::new(max_files_format_ctx);
+        children.push(max_files_node);
+
         let purge_name = format!("Purge {}", copy.purge);
         let purge_name_ctx = AstFormatContext::new(purge_name);
         let purge_name_node = FormatTreeNode::new(purge_name_ctx);
@@ -1886,6 +1891,36 @@ impl<'ast> Visitor<'ast> for AstFormatVisitor {
         let name = "Presign".to_string();
         let format_ctx = AstFormatContext::with_children(name, children.len());
         let node = FormatTreeNode::with_children(format_ctx, children);
+        self.children.push(node);
+    }
+
+    fn visit_create_share_endpoint(&mut self, stmt: &'ast CreateShareEndpointStmt) {
+        let mut children = Vec::new();
+        let share_endpoint_format_ctx =
+            AstFormatContext::new(format!("ShareEndpoint {}", stmt.endpoint));
+        children.push(FormatTreeNode::new(share_endpoint_format_ctx));
+        if let Some(comment) = &stmt.comment {
+            let comment_format_ctx = AstFormatContext::new(format!("Comment {}", comment));
+            children.push(FormatTreeNode::new(comment_format_ctx));
+        }
+
+        let name = "CreateShareEndpoint".to_string();
+        let format_ctx = AstFormatContext::with_children(name, children.len());
+        let node = FormatTreeNode::with_children(format_ctx, children);
+        self.children.push(node);
+    }
+
+    fn visit_show_share_endpoint(&mut self, _stmt: &'ast ShowShareEndpointStmt) {
+        let name = "ShowShareEndpoint".to_string();
+        let format_ctx = AstFormatContext::new(name);
+        let node = FormatTreeNode::new(format_ctx);
+        self.children.push(node);
+    }
+
+    fn visit_drop_share_endpoint(&mut self, _stmt: &'ast DropShareEndpointStmt) {
+        let name = "DropShareEndpoint".to_string();
+        let format_ctx = AstFormatContext::new(name);
+        let node = FormatTreeNode::new(format_ctx);
         self.children.push(node);
     }
 
