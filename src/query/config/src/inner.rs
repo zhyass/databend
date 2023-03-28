@@ -422,7 +422,7 @@ pub struct CheckConfig {
     pub database: String,
     pub table: String,
     pub enable_commit: bool,
-    pub ignore_undetect_segment: bool,
+    pub ignore_unfound_segment: bool,
 }
 
 impl Default for CheckConfig {
@@ -431,7 +431,7 @@ impl Default for CheckConfig {
             database: "".to_string(),
             table: "".to_string(),
             enable_commit: false,
-            ignore_undetect_segment: false,
+            ignore_unfound_segment: false,
         }
     }
 }

@@ -341,7 +341,7 @@ impl FuseTable {
         &self,
         ctx: Arc<dyn TableContext>,
         enable_commit: bool,
-        ignore_undetect_segment: bool,
+        ignore_unfound_segment: bool,
     ) -> Result<()> {
         let start = Instant::now();
         let root_snapshot = self.read_table_snapshot().await?;
@@ -391,7 +391,7 @@ impl FuseTable {
             eprintln!("no duplicate segments found, quit");
             return Ok(());
         }
-        eprintln!("all the dup_segments: {:?}", root_dup_segments);
+        eprintln!("all the duplicate segments: {:?}", root_dup_segments);
 
         let reader = MetaReaders::table_snapshot_reader(self.get_operator());
         // grab the table history as stream
@@ -480,7 +480,7 @@ impl FuseTable {
                 assert!(pos > 0);
                 let lost_segment = current_segments[pos - 1].clone();
                 eprintln!(
-                    "find lost segment:{:?} in snapshot_id:{}, match the dup segment:{:?}",
+                    "find lost segment:{:?} in snapshot_id:{}, match the duplicate segment:{:?}",
                     lost_segment, current_snapshot.snapshot_id, location
                 );
                 // 拿到location在root segments中的index。
@@ -506,20 +506,27 @@ impl FuseTable {
             base_segments = current_segments;
         }
 
-        eprintln!("all the lost_segments: {:?}", lost_segments);
+        eprintln!("all the found lost_segments: {:?}", lost_segments);
         // 校验是否全部找回。如果长度不一致，则说明有segment已经被清理，无法找回。
-        // 如果 ignore_undetect_segment 为 false，直接返回错误。
-        if !ignore_undetect_segment && lost_segments.len() != root_dup_segments.len() {
+        // 如果 ignore_unfound_segment 为 false，直接返回错误。
+        if lost_segments.len() != root_dup_segments.len() {
             eprintln!(
-                "error: cannot find all of the lost segments, purge may have been executed during the period. lost:'{}', find:'{}'.",
-                root_dup_segments.len(),
-                lost_segments.len()
+                "warning: only find lost segments {}/{}, purge may have been executed during the period.",
+                lost_segments.len(),
+                root_dup_segments.len()
             );
-            return Err(ErrorCode::Internal(format!(
-                "error: cannot find all of the lost segments, lost:'{}', find:'{}'",
-                root_dup_segments.len(),
-                lost_segments.len()
-            )));
+
+            if ignore_unfound_segment {
+                eprintln!(
+                    "warning: there exist segments that were not found, will de-duplicate the remaining duplicate segments."
+                );
+            } else {
+                return Err(ErrorCode::Internal(format!(
+                    "error: cannot find all of the lost segments, lost:'{}', find:'{}'",
+                    root_dup_segments.len(),
+                    lost_segments.len()
+                )));
+            }
         }
 
         let mut undetect_dup_segments_idx: HashSet<_> = root_dup_segments.values().collect();
@@ -531,9 +538,6 @@ impl FuseTable {
             undetect_dup_segments_idx.remove(seg_idx);
         }
 
-        if !undetect_dup_segments_idx.is_empty() {
-            eprintln!("warning: there is undetected segments and it will be de-duplicated.",);
-        }
         // 如果undetect_dup_segments_idx不为空，选择对重复的segment做去重，将会导致部分数据缺失。
         for seg_idx in undetect_dup_segments_idx {
             segments_editor.remove(seg_idx);
@@ -573,11 +577,12 @@ impl FuseTable {
         new_snapshot.segments = new_segments.into_iter().cloned().collect();
         new_snapshot.summary = stats_acc;
         eprintln!(
-            "new snapshot:\n {}",
+            "new snapshot:\n{}",
             serde_json::to_string_pretty(&new_snapshot)?
         );
 
         if enable_commit {
+            eprintln!("start commit the new snapshot to meta server");
             // commit to meta server.
             FuseTable::commit_to_meta_server(
                 ctx.as_ref(),

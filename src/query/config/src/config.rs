@@ -1838,8 +1838,8 @@ pub struct CheckConfig {
     pub enable_commit: bool,
 
     // Ignore duplicate segments that are not found and perform deduplication directly.
-    #[clap(long = "ignore-undetect-segment")]
-    pub ignore_undetect_segment: bool,
+    #[clap(long = "ignore-unfound-segment")]
+    pub ignore_unfound_segment: bool,
 }
 
 impl Default for CheckConfig {
@@ -1863,7 +1863,7 @@ impl From<InnerCheckConfig> for CheckConfig {
             database: inner.database,
             check_table: inner.table,
             enable_commit: inner.enable_commit,
-            ignore_undetect_segment: inner.ignore_undetect_segment,
+            ignore_unfound_segment: inner.ignore_unfound_segment,
         }
     }
 }
@@ -1887,7 +1887,7 @@ impl TryInto<InnerCheckConfig> for CheckConfig {
             database: self.database,
             table: self.check_table,
             enable_commit: self.enable_commit,
-            ignore_undetect_segment: self.ignore_undetect_segment,
+            ignore_unfound_segment: self.ignore_unfound_segment,
         })
     }
 }
