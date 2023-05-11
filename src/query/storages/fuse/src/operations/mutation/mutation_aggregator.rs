@@ -37,14 +37,14 @@ use crate::io::SegmentsIO;
 use crate::io::SerializedSegment;
 use crate::io::TableMetaLocationGenerator;
 use crate::operations::mutation::AbortOperation;
+use crate::operations::mutation::BlockIndex;
 use crate::operations::mutation::Mutation;
 use crate::operations::mutation::MutationSinkMeta;
 use crate::operations::mutation::MutationTransformMeta;
+use crate::operations::mutation::SegmentIndex;
 use crate::statistics::reducers::deduct_statistics_mut;
 use crate::statistics::reducers::merge_statistics_mut;
 use crate::statistics::reducers::reduce_block_metas;
-
-type MutationMap = HashMap<usize, (Vec<(usize, Arc<BlockMeta>)>, Vec<usize>)>;
 
 struct SegmentLite {
     // segment index.
@@ -66,7 +66,7 @@ pub struct MutationAggregator {
     thresholds: BlockThresholds,
     abort_operation: AbortOperation,
 
-    input_metas: MutationMap,
+    mutations: Mutations,
 
     start_time: Instant,
     total_tasks: usize,
@@ -94,7 +94,7 @@ impl MutationAggregator {
             merged_statistics,
             thresholds,
             abort_operation: AbortOperation::default(),
-            input_metas: HashMap::new(),
+            mutations: Mutations::new(),
             start_time: Instant::now(),
             total_tasks,
             finished_tasks: 0,
@@ -107,7 +107,8 @@ impl MutationAggregator {
         let thresholds = self.thresholds;
         let mut tasks = Vec::with_capacity(segment_indices.len());
         for index in segment_indices {
-            let (replaced, deleted) = self.input_metas.remove(&index).unwrap();
+            let MutationEntry { replaced, deleted } =
+                self.mutations.entries.remove(&index).unwrap();
             let location = self.base_segments[index].clone();
             let op = self.dal.clone();
             let schema = self.schema.clone();
@@ -185,26 +186,17 @@ impl AsyncAccumulatingTransform for MutationAggregator {
     #[async_backtrace::framed]
     async fn transform(&mut self, data: DataBlock) -> Result<Option<DataBlock>> {
         // gather the input data.
-        if let Some(meta) = data
+        if let Some(mutation_transform_meta) = data
             .get_meta()
             .and_then(MutationTransformMeta::downcast_ref_from)
         {
             self.finished_tasks += 1;
-            match &meta.op {
-                Mutation::Replaced(block_meta) => {
-                    self.input_metas
-                        .entry(meta.index.segment_idx)
-                        .and_modify(|v| v.0.push((meta.index.block_idx, block_meta.clone())))
-                        .or_insert((vec![(meta.index.block_idx, block_meta.clone())], vec![]));
-                    self.abort_operation.add_block(block_meta);
-                }
-                Mutation::Deleted => {
-                    self.input_metas
-                        .entry(meta.index.segment_idx)
-                        .and_modify(|v| v.1.push(meta.index.block_idx))
-                        .or_insert((vec![], vec![meta.index.block_idx]));
-                }
-                Mutation::DoNothing => (),
+            self.mutations
+                .accumulate_mutation_op(mutation_transform_meta);
+
+            // for replacement, record the undo operation.
+            if let Mutation::Replaced(block_meta) = &mutation_transform_meta.op {
+                self.abort_operation.add_block(block_meta);
             }
 
             // Refresh status
@@ -226,7 +218,7 @@ impl AsyncAccumulatingTransform for MutationAggregator {
     #[async_backtrace::framed]
     async fn on_finish(&mut self, _output: bool) -> Result<Option<DataBlock>> {
         let mut recalc_stats = false;
-        if self.input_metas.len() == self.base_segments.len() {
+        if self.mutations.entries.len() == self.base_segments.len() {
             self.merged_statistics = Statistics::default();
             recalc_stats = true;
         }
@@ -239,7 +231,7 @@ impl AsyncAccumulatingTransform for MutationAggregator {
             BTreeMap::<_, _>::from_iter(segment_locations.into_iter().enumerate());
 
         let chunk_size = self.ctx.get_settings().get_max_storage_io_requests()? as usize;
-        let segment_indices = self.input_metas.keys().cloned().collect::<Vec<_>>();
+        let segment_indices = self.mutations.entries.keys().cloned().collect::<Vec<_>>();
         for chunk in segment_indices.chunks(chunk_size) {
             let results = self.generate_segments(chunk.to_vec()).await?;
             for result in results {
@@ -285,5 +277,71 @@ impl AsyncAccumulatingTransform for MutationAggregator {
         );
 
         Ok(Some(DataBlock::empty_with_meta(meta)))
+    }
+}
+
+struct MutationEntry {
+    replaced: Vec<(BlockIndex, Arc<BlockMeta>)>,
+    deleted: Vec<BlockIndex>,
+}
+
+impl MutationEntry {
+    fn new_replacement(block_meta_idx: BlockIndex, block_meta: Arc<BlockMeta>) -> Self {
+        MutationEntry {
+            replaced: vec![(block_meta_idx, block_meta)],
+            deleted: vec![],
+        }
+    }
+
+    fn add_replacement(&mut self, block_meta_idx: BlockIndex, block_meta: Arc<BlockMeta>) {
+        self.replaced.push((block_meta_idx, block_meta));
+    }
+
+    fn new_deletion(block_meta_idx: BlockIndex) -> Self {
+        MutationEntry {
+            replaced: vec![],
+            deleted: vec![block_meta_idx],
+        }
+    }
+
+    fn add_deletion(&mut self, block_meta_idx: BlockIndex) {
+        self.deleted.push(block_meta_idx);
+    }
+}
+
+pub struct Mutations {
+    entries: HashMap<SegmentIndex, MutationEntry>,
+}
+
+impl Mutations {
+    fn new() -> Self {
+        Self {
+            entries: Default::default(),
+        }
+    }
+
+    fn accumulate_mutation_op(&mut self, mutation_transform: &MutationTransformMeta) {
+        match &mutation_transform.op {
+            Mutation::Replaced(block_meta) => {
+                self.entries
+                    .entry(mutation_transform.index.segment_idx)
+                    .and_modify(|v| {
+                        v.add_replacement(mutation_transform.index.block_idx, block_meta.clone())
+                    })
+                    .or_insert(MutationEntry::new_replacement(
+                        mutation_transform.index.block_idx,
+                        block_meta.clone(),
+                    ));
+            }
+            Mutation::Deleted => {
+                self.entries
+                    .entry(mutation_transform.index.segment_idx)
+                    .and_modify(|v| v.add_deletion(mutation_transform.index.block_idx))
+                    .or_insert(MutationEntry::new_deletion(
+                        mutation_transform.index.block_idx,
+                    ));
+            }
+            Mutation::DoNothing => (),
+        }
     }
 }
