@@ -539,6 +539,11 @@ async fn test_sync_agg_index_after_copy_into() -> Result<()> {
         .get_settings()
         .set_enable_refresh_aggregating_index_after_write(true)?;
 
+    fixture
+        .default_session()
+        .get_settings()
+        .set_auto_compaction_threshold(1)?;
+
     // Create table
     fixture.execute_command(
         "CREATE TABLE books (title VARCHAR, author VARCHAR, date VARCHAR) storage_format = 'parquet'",
