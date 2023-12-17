@@ -493,8 +493,8 @@ impl DefaultSettings {
                 ("auto_compaction_threshold", DefaultSettingValue {
                     value: UserSettingValue::UInt64(1000),
                     desc: "Threshold for triggering auto compaction after write(copy/insert).",
-                    possible_values: None,
                     mode: SettingMode::Both,
+                    range: None,
                 }),
                 ("use_parquet2", DefaultSettingValue {
                     value: UserSettingValue::UInt64(0),
