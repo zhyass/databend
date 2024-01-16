@@ -122,7 +122,6 @@ impl StreamHandler for RealStreamHandler {
                 } else {
                     MODE_STANDARD
                 };
-                options.insert(OPT_KEY_MODE.to_string(), stream_mode.to_string());
                 options.insert(OPT_KEY_TABLE_NAME.to_string(), plan.table_name.clone());
                 options.insert(
                     OPT_KEY_DATABASE_NAME.to_string(),
@@ -130,6 +129,7 @@ impl StreamHandler for RealStreamHandler {
                 );
                 options.insert(OPT_KEY_TABLE_ID.to_string(), table_id.to_string());
                 options.insert(OPT_KEY_TABLE_VER.to_string(), table_version.to_string());
+                options.insert(OPT_KEY_MODE.to_string(), stream_mode.to_string());
                 let fuse_table = FuseTable::try_from_table(table.as_ref())?;
                 if let Some(snapshot_loc) = fuse_table.snapshot_loc().await? {
                     options.insert(OPT_KEY_SNAPSHOT_LOCATION.to_string(), snapshot_loc);
