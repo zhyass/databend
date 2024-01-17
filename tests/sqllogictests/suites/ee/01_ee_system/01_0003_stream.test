@@ -107,8 +107,10 @@ select * from t1 order by a
 statement ok
 set enable_experimental_merge_into = 1
 
-statement ok
+query I
 merge into t1 using (select a from s1) as t2 on t1.a = t2.a when matched then delete
+----
+2
 
 query I
 select * from t1
