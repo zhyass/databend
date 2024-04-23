@@ -34,6 +34,7 @@ pub enum Feature {
     ComputedColumn,
     StorageEncryption,
     Stream,
+    DynamicTable,
 }
 
 impl Display for Feature {
@@ -71,6 +72,9 @@ impl Display for Feature {
             }
             Feature::Stream => {
                 write!(f, "stream")
+            }
+            Feature::DynamicTable => {
+                write!(f, "dynamic_table")
             }
         }
     }

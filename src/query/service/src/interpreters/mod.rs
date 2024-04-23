@@ -37,6 +37,7 @@ mod interpreter_database_rename;
 mod interpreter_database_show_create;
 mod interpreter_database_undrop;
 mod interpreter_delete;
+mod interpreter_dynamic_create;
 mod interpreter_execute_immediate;
 mod interpreter_explain;
 mod interpreter_factory;

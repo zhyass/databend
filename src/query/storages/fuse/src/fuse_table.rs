@@ -70,6 +70,7 @@ use databend_storages_common_table_meta::table::TableCompression;
 use databend_storages_common_table_meta::table::OPT_KEY_BLOOM_INDEX_COLUMNS;
 use databend_storages_common_table_meta::table::OPT_KEY_CHANGE_TRACKING;
 use databend_storages_common_table_meta::table::OPT_KEY_DATABASE_ID;
+use databend_storages_common_table_meta::table::OPT_KEY_DYNAMIC;
 use databend_storages_common_table_meta::table::OPT_KEY_LEGACY_SNAPSHOT_LOC;
 use databend_storages_common_table_meta::table::OPT_KEY_SNAPSHOT_LOCATION;
 use databend_storages_common_table_meta::table::OPT_KEY_STORAGE_FORMAT;
@@ -190,8 +191,15 @@ impl FuseTable {
                     }
                     // Normal table.
                     None => {
+                        let dynamic = table_info.meta.options.contains_key(OPT_KEY_DYNAMIC);
+                        let table_type = if dynamic {
+                            FuseTableType::Dynamic
+                        } else {
+                            FuseTableType::Standard
+                        };
+
                         let operator = DataOperator::instance().operator();
-                        (operator, FuseTableType::Standard)
+                        (operator, table_type)
                     }
                 }
             }

@@ -4583,6 +4583,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "databend-enterprise-dynamic-table"
+version = "0.1.0"
+
+[[package]]
 name = "databend-enterprise-inverted-index"
 version = "0.1.0"
 dependencies = [
@@ -4634,6 +4638,7 @@ dependencies = [
  "databend-enterprise-aggregating-index",
  "databend-enterprise-background-service",
  "databend-enterprise-data-mask-feature",
+ "databend-enterprise-dynamic-table",
  "databend-enterprise-inverted-index",
  "databend-enterprise-storage-encryption",
  "databend-enterprise-stream-handler",

@@ -11,12 +11,3 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
-pub const OPT_KEY_AS_QUERY: &str = "as_query";
-pub const OPT_KEY_TARGET_LAG: &str = "target_lag";
-pub const OPT_KEY_REFRESH_MODE: &str = "refresh_mode";
-pub const OPT_KEY_INITIALIZE: &str = "initialize";
-pub const OPT_KEY_WAREHOUSE: &str = "warehouse";
-pub const OPT_KEY_LIFECYCLE: &str = "lifecycle";
-pub const OPT_KEY_DYNAMIC: &str = "dynamic";
-pub const OPT_KEY_TASK_NAME: &str = "task";

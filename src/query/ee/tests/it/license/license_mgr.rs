@@ -103,6 +103,7 @@ async fn test_license_features() -> databend_common_exception::Result<()> {
                 "license_info".to_string(),
                 "vacuum".to_string(),
                 "stream".to_string(),
+                "dynamic_table".to_string(),
             ]),
         ),
         Duration::from_hours(2),
@@ -144,7 +145,13 @@ async fn test_license_features() -> databend_common_exception::Result<()> {
 
     assert!(
         license_mgr
-            .check_enterprise_enabled(token, Feature::Stream)
+            .check_enterprise_enabled(token.clone(), Feature::Stream)
+            .is_ok()
+    );
+
+    assert!(
+        license_mgr
+            .check_enterprise_enabled(token, Feature::DynamicTable)
             .is_ok()
     );
 

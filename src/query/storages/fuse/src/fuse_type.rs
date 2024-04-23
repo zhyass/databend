@@ -30,6 +30,8 @@ pub enum FuseTableType {
     AttachedReadOnly,
     // Shared table with read-only access.
     SharedReadOnly,
+    // Dynamic table.
+    Dynamic,
 }
 
 impl FuseTableType {
@@ -41,6 +43,7 @@ impl FuseTableType {
             FuseTableType::Attached => false,
             FuseTableType::AttachedReadOnly => true,
             FuseTableType::SharedReadOnly => true,
+            FuseTableType::Dynamic => true,
         }
     }
 }

@@ -26,6 +26,7 @@ use databend_common_expression::TableSchemaRefExt;
 use databend_common_meta_app::storage::StorageParams;
 use databend_storages_common_table_meta::table::OPT_KEY_AS_QUERY;
 use databend_storages_common_table_meta::table::OPT_KEY_DATABASE_ID;
+use databend_storages_common_table_meta::table::OPT_KEY_DYNAMIC;
 use databend_storages_common_table_meta::table::OPT_KEY_STORAGE_FORMAT;
 use databend_storages_common_table_meta::table::OPT_KEY_TABLE_COMPRESSION;
 use databend_storages_common_table_meta::table::OPT_KEY_TARGET_LAG;
@@ -61,6 +62,7 @@ impl Binder {
 
         let mut options: BTreeMap<String, String> = BTreeMap::new();
         {
+            options.insert(OPT_KEY_DYNAMIC.to_owned(), "T".to_owned());
             // If table is TRANSIENT, set a flag in table option
             if *transient {
                 options.insert("TRANSIENT".to_owned(), "T".to_owned());
