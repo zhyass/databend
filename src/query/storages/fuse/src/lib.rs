@@ -21,6 +21,7 @@
 #![feature(int_roundings)]
 #![feature(iterator_try_reduce)]
 #![feature(slice_take)]
+#![feature(box_patterns)]
 #![allow(clippy::large_enum_variant)]
 #![recursion_limit = "256"]
 
