@@ -70,6 +70,7 @@ use databend_common_sql::binder::STREAM_COLUMN_FACTORY;
 use databend_common_sql::parse_cluster_keys;
 use databend_common_sql::plans::TruncateMode;
 use databend_common_sql::BloomIndexColumns;
+use databend_common_sql::DistinctColumns;
 use databend_common_storage::init_operator;
 use databend_common_storage::DataOperator;
 use databend_common_storage::StorageMetrics;
@@ -90,6 +91,7 @@ use databend_storages_common_table_meta::table::TableCompression;
 use databend_storages_common_table_meta::table::OPT_KEY_BLOOM_INDEX_COLUMNS;
 use databend_storages_common_table_meta::table::OPT_KEY_CHANGE_TRACKING;
 use databend_storages_common_table_meta::table::OPT_KEY_CLUSTER_TYPE;
+use databend_storages_common_table_meta::table::OPT_KEY_DISTINCT_COLUMNS;
 use databend_storages_common_table_meta::table::OPT_KEY_LEGACY_SNAPSHOT_LOC;
 use databend_storages_common_table_meta::table::OPT_KEY_SEGMENT_FORMAT;
 use databend_storages_common_table_meta::table::OPT_KEY_SNAPSHOT_LOCATION;
@@ -141,6 +143,7 @@ pub struct FuseTable {
     pub(crate) segment_format: FuseSegmentFormat,
     pub(crate) table_compression: TableCompression,
     pub(crate) bloom_index_cols: BloomIndexColumns,
+    pub(crate) distinct_columns: DistinctColumns,
 
     pub(crate) operator: Operator,
     pub(crate) data_metrics: Arc<StorageMetrics>,
@@ -234,6 +237,12 @@ impl FuseTable {
             .and_then(|s| s.parse::<BloomIndexColumns>().ok())
             .unwrap_or(BloomIndexColumns::All);
 
+        let distinct_columns = table_info
+            .options()
+            .get(OPT_KEY_DISTINCT_COLUMNS)
+            .and_then(|s| s.parse::<DistinctColumns>().ok())
+            .unwrap_or(DistinctColumns::None);
+
         let meta_location_generator = TableMetaLocationGenerator::new(storage_prefix);
         if !table_info.meta.part_prefix.is_empty() {
             return Err(ErrorCode::StorageOther(
@@ -246,6 +255,7 @@ impl FuseTable {
             meta_location_generator,
             cluster_key_meta,
             bloom_index_cols,
+            distinct_columns,
             operator,
             data_metrics,
             storage_format: FuseStorageFormat::from_str(storage_format.as_str())?,
@@ -458,6 +468,10 @@ impl FuseTable {
 
     pub fn bloom_index_cols(&self) -> BloomIndexColumns {
         self.bloom_index_cols.clone()
+    }
+
+    pub fn distinct_columns(&self) -> DistinctColumns {
+        self.distinct_columns.clone()
     }
 
     // Check if table is attached.

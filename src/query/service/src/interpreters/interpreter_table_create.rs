@@ -71,6 +71,7 @@ use crate::interpreters::common::table_option_validation::is_valid_bloom_index_c
 use crate::interpreters::common::table_option_validation::is_valid_change_tracking;
 use crate::interpreters::common::table_option_validation::is_valid_create_opt;
 use crate::interpreters::common::table_option_validation::is_valid_data_retention_period;
+use crate::interpreters::common::table_option_validation::is_valid_distinct_columns;
 use crate::interpreters::common::table_option_validation::is_valid_option_of_type;
 use crate::interpreters::common::table_option_validation::is_valid_random_seed;
 use crate::interpreters::common::table_option_validation::is_valid_row_per_block;
@@ -467,7 +468,8 @@ impl CreateTableInterpreter {
         is_valid_block_per_segment(&table_meta.options)?;
         is_valid_row_per_block(&table_meta.options)?;
         // check bloom_index_columns.
-        is_valid_bloom_index_columns(&table_meta.options, schema)?;
+        is_valid_bloom_index_columns(&table_meta.options, schema.clone())?;
+        is_valid_distinct_columns(&table_meta.options, schema)?;
         is_valid_change_tracking(&table_meta.options)?;
         // check random seed
         is_valid_random_seed(&table_meta.options)?;

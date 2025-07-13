@@ -64,6 +64,7 @@ impl From<BlockMeta> for crate::meta::BlockMeta {
             inverted_index_size: None,
             ngram_filter_index_size: None,
             virtual_block_meta: None,
+            block_stats_meta: None,
             compression: value.compression.into(),
             create_on: None,
         }

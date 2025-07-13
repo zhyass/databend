@@ -14,6 +14,7 @@
 
 pub use v0::ColumnMeta as SingleColumnMeta;
 pub use v2::BlockMeta;
+pub use v2::BlockStatisticsMeta;
 pub use v2::ClusterStatistics;
 pub use v2::ColumnMeta;
 pub use v2::ColumnStatistics;
@@ -25,6 +26,7 @@ pub use v2::Statistics;
 pub use v2::VirtualBlockMeta;
 pub use v2::VirtualColumnMeta;
 pub use v3::TableSnapshotStatistics;
+pub use v4::BlockStatistics;
 pub use v4::CompactSegmentInfo;
 pub use v4::RawBlockMeta;
 pub use v4::SegmentInfo;

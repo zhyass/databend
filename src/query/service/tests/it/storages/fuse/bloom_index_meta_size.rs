@@ -338,6 +338,7 @@ fn build_test_segment_info(
         inverted_index_size: None,
         ngram_filter_index_size: None,
         virtual_block_meta: None,
+        block_stats_meta: None,
         compression: Compression::Lz4,
         create_on: Some(Utc::now()),
     };

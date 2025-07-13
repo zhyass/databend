@@ -18,6 +18,7 @@ use databend_common_exception::Result;
 use databend_common_expression::DataBlock;
 use databend_storages_common_table_meta::meta::trim_object_prefix;
 use databend_storages_common_table_meta::meta::uuid_from_date_time;
+use databend_storages_common_table_meta::meta::BlockStatistics;
 use databend_storages_common_table_meta::meta::Location;
 use databend_storages_common_table_meta::meta::SegmentInfo;
 use databend_storages_common_table_meta::meta::SnapshotVersion;
@@ -36,6 +37,7 @@ use crate::constants::FUSE_TBL_VIRTUAL_BLOCK_PREFIX;
 use crate::index::filters::BlockFilter;
 use crate::index::InvertedIndexFile;
 use crate::FUSE_TBL_AGG_INDEX_PREFIX;
+use crate::FUSE_TBL_BLOCK_STATISTICS_PREFIX;
 use crate::FUSE_TBL_INVERTED_INDEX_PREFIX;
 use crate::FUSE_TBL_LAST_SNAPSHOT_HINT_V2;
 use crate::FUSE_TBL_XOR_BLOOM_INDEX_PREFIX;
@@ -63,6 +65,7 @@ pub struct TableMetaLocationGenerator {
     snapshot_location_prefix: String,
     agg_index_location_prefix: String,
     inverted_index_location_prefix: String,
+    block_statistics_location_prefix: String,
 }
 
 impl TableMetaLocationGenerator {
@@ -75,6 +78,8 @@ impl TableMetaLocationGenerator {
         let agg_index_location_prefix = format!("{}/{}/", &prefix, FUSE_TBL_AGG_INDEX_PREFIX);
         let inverted_index_location_prefix =
             format!("{}/{}/", &prefix, FUSE_TBL_INVERTED_INDEX_PREFIX);
+        let block_statistics_location_prefix =
+            format!("{}/{}/", &prefix, FUSE_TBL_BLOCK_STATISTICS_PREFIX);
         Self {
             prefix,
             block_location_prefix,
@@ -83,6 +88,7 @@ impl TableMetaLocationGenerator {
             snapshot_location_prefix,
             agg_index_location_prefix,
             inverted_index_location_prefix,
+            block_statistics_location_prefix,
         }
     }
 
@@ -104,6 +110,10 @@ impl TableMetaLocationGenerator {
 
     pub fn snapshot_location_prefix(&self) -> &str {
         &self.snapshot_location_prefix
+    }
+
+    pub fn block_statistics_location_prefix(&self) -> &str {
+        &self.block_statistics_location_prefix
     }
 
     pub fn gen_block_location(
@@ -273,6 +283,21 @@ impl TableMetaLocationGenerator {
             FUSE_TBL_XOR_BLOOM_INDEX_PREFIX,
             id,
             BlockFilter::VERSION,
+        )
+    }
+
+    pub fn gen_block_stats_location_from_block_location(loc: &str) -> String {
+        let splits = loc.split('/').collect::<Vec<_>>();
+        let len = splits.len();
+        let prefix = splits[..len - 2].join("/");
+        let block_name = trim_object_prefix(splits[len - 1]);
+        let id: String = block_name.chars().take(32).collect();
+        format!(
+            "{}/{}/{}_v{}.mpk",
+            prefix,
+            FUSE_TBL_BLOCK_STATISTICS_PREFIX,
+            id,
+            BlockStatistics::VERSION,
         )
     }
 }

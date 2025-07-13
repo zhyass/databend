@@ -53,6 +53,7 @@ use crate::interpreters::common::table_option_validation::is_valid_block_per_seg
 use crate::interpreters::common::table_option_validation::is_valid_bloom_index_columns;
 use crate::interpreters::common::table_option_validation::is_valid_create_opt;
 use crate::interpreters::common::table_option_validation::is_valid_data_retention_period;
+use crate::interpreters::common::table_option_validation::is_valid_distinct_columns;
 use crate::interpreters::common::table_option_validation::is_valid_option_of_type;
 use crate::interpreters::common::table_option_validation::is_valid_row_per_block;
 use crate::interpreters::Interpreter;
@@ -163,6 +164,7 @@ impl Interpreter for SetOptionsInterpreter {
 
         // check bloom_index_columns.
         is_valid_bloom_index_columns(&self.plan.set_options, table.schema())?;
+        is_valid_distinct_columns(&self.plan.set_options, table.schema())?;
 
         if let Some(new_snapshot_location) =
             set_segment_format(self.ctx.clone(), table.clone(), &self.plan.set_options).await?

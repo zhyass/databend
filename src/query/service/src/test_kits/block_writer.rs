@@ -110,6 +110,7 @@ impl<'a> BlockWriter<'a> {
             None,
             None,
             None,
+            None,
             Compression::Lz4Raw,
             Some(Utc::now()),
         );

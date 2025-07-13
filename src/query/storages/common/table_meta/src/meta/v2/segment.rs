@@ -150,6 +150,12 @@ pub struct DraftVirtualBlockMeta {
     pub virtual_location: Location,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct BlockStatisticsMeta {
+    pub location: Location,
+    pub size: u64,
+}
+
 /// Meta information of a block
 /// Part of and kept inside the [SegmentInfo]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -172,6 +178,9 @@ pub struct BlockMeta {
     pub ngram_filter_index_size: Option<u64>,
     /// The block meta of virtual columns.
     pub virtual_block_meta: Option<VirtualBlockMeta>,
+
+    pub block_stats_meta: Option<BlockStatisticsMeta>,
+
     pub compression: Compression,
 
     // block create_on
@@ -193,6 +202,7 @@ impl BlockMeta {
         inverted_index_size: Option<u64>,
         ngram_filter_index_size: Option<u64>,
         virtual_block_meta: Option<VirtualBlockMeta>,
+        block_stats_meta: Option<BlockStatisticsMeta>,
         compression: Compression,
         create_on: Option<DateTime<Utc>>,
     ) -> Self {
@@ -209,6 +219,7 @@ impl BlockMeta {
             inverted_index_size,
             ngram_filter_index_size,
             virtual_block_meta,
+            block_stats_meta,
             compression,
             create_on,
         }
@@ -369,6 +380,7 @@ impl BlockMeta {
             compression: Compression::Lz4,
             inverted_index_size: None,
             virtual_block_meta: None,
+            block_stats_meta: None,
             create_on: None,
             ngram_filter_index_size: None,
         }
@@ -395,6 +407,7 @@ impl BlockMeta {
             compression: s.compression,
             inverted_index_size: None,
             virtual_block_meta: None,
+            block_stats_meta: None,
             create_on: None,
             ngram_filter_index_size: None,
         }
