@@ -19,21 +19,27 @@ use databend_common_catalog::table_context::TableContext;
 use databend_common_exception::Result;
 use databend_common_meta_app::schema::LockKey;
 use databend_common_meta_app::schema::LockType;
-use databend_common_meta_app::schema::TableInfo;
 use databend_common_pipeline::core::LockGuard;
 
 use crate::locks::LockManager;
 
 pub struct TableLock {
     lock_mgr: Arc<LockManager>,
-    table_info: TableInfo,
+    catalog_name: String,
+    /// The table id or branch id.
+    table_target_id: u64,
 }
 
 impl TableLock {
-    pub fn create(lock_mgr: Arc<LockManager>, table_info: TableInfo) -> Arc<dyn Lock> {
+    pub fn create(
+        lock_mgr: Arc<LockManager>,
+        catalog_name: String,
+        table_target_id: u64,
+    ) -> Arc<dyn Lock> {
         Arc::new(TableLock {
             lock_mgr,
-            table_info,
+            catalog_name,
+            table_target_id,
         })
     }
 }
@@ -50,14 +56,12 @@ impl Lock for TableLock {
         should_retry: bool,
     ) -> Result<Option<Arc<LockGuard>>> {
         let tenant = ctx.get_tenant();
-        let table_id = self.table_info.ident.table_id;
         let lock_key = LockKey::Table {
             tenant: tenant.clone(),
-            table_id,
+            id: self.table_target_id,
         };
-        let catalog = self.table_info.catalog();
         self.lock_mgr
-            .try_lock(ctx, lock_key, catalog, should_retry)
+            .try_lock(ctx, lock_key, &self.catalog_name, should_retry)
             .await
     }
 }

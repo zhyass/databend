@@ -138,7 +138,7 @@ where
         let ctx = func_name!();
 
         let lock_key = &req.lock_key;
-        let table_id = lock_key.get_table_id();
+        let id = lock_key.get_target_id();
         let key = lock_key.gen_key(req.revision);
 
         self.crud_update_existing(
@@ -153,11 +153,7 @@ where
                 }
                 Some((lock_meta, Some(req.ttl)))
             },
-            || {
-                Err(AppError::TableLockExpired(TableLockExpired::new(
-                    table_id, ctx,
-                )))
-            },
+            || Err(AppError::TableLockExpired(TableLockExpired::new(id, ctx))),
         )
         .await??;
         Ok(())
@@ -186,7 +182,7 @@ where
             let strm = self.list_pb(ListOptions::unlimited(dir)).await?;
             let locks = strm
                 .map_ok(|itm| LockInfo {
-                    table_id: itm.key.table_id(),
+                    id: itm.key.ident_id(),
                     revision: itm.key.revision(),
                     meta: itm.seqv.data,
                 })

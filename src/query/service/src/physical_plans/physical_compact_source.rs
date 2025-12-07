@@ -16,6 +16,7 @@ use std::any::Any;
 use std::collections::HashSet;
 
 use databend_common_base::runtime::Runtime;
+use databend_common_catalog::plan::ExtendedTableInfo;
 use databend_common_catalog::plan::PartInfoType;
 use databend_common_catalog::plan::Partitions;
 use databend_common_catalog::plan::PartitionsShuffleKind;
@@ -26,7 +27,6 @@ use databend_common_catalog::table_context::TableContext;
 use databend_common_exception::ErrorCode;
 use databend_common_exception::Result;
 use databend_common_expression::ColumnId;
-use databend_common_meta_app::schema::TableInfo;
 use databend_common_pipeline::sources::EmptySource;
 use databend_common_pipeline::sources::PrefetchAsyncSourcer;
 use databend_common_pipeline_transforms::TransformPipelineHelper;
@@ -54,7 +54,7 @@ use crate::pipelines::PipelineBuilder;
 pub struct CompactSource {
     pub meta: PhysicalPlanMeta,
     pub parts: Partitions,
-    pub table_info: TableInfo,
+    pub table_info: ExtendedTableInfo,
     pub column_ids: HashSet<ColumnId>,
     pub table_meta_timestamps: TableMetaTimestamps,
 }
@@ -86,7 +86,7 @@ impl IPhysicalPlan for CompactSource {
     fn build_pipeline2(&self, builder: &mut PipelineBuilder) -> Result<()> {
         let table = builder
             .ctx
-            .build_table_by_table_info(&self.table_info, &None, None)?;
+            .build_table_by_table_info(&self.table_info, None)?;
         let table = FuseTable::try_from_table(table.as_ref())?;
 
         if self.parts.is_empty() {
@@ -232,16 +232,19 @@ impl PhysicalPlanBuilder {
             catalog,
             database,
             table,
+            branch,
             limit,
         } = compact_block;
 
         let tenant = self.ctx.get_tenant();
         let catalog = self.ctx.get_catalog(catalog).await?;
-        let tbl = catalog.get_table(&tenant, database, table).await?;
+        let tbl = catalog
+            .get_table_with_branch(&tenant, database, table, branch.as_deref())
+            .await?;
         // check mutability
         tbl.check_mutable()?;
 
-        let table_info = tbl.get_table_info().clone();
+        let table_info = ExtendedTableInfo::from_table(tbl.as_ref());
 
         let Some((parts, snapshot)) = tbl.compact_blocks(self.ctx.clone(), limit.clone()).await?
         else {

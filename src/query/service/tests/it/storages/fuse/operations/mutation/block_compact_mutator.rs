@@ -15,6 +15,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use databend_common_catalog::plan::ExtendedTableInfo;
 use databend_common_catalog::plan::PartInfoType;
 use databend_common_catalog::plan::Partitions;
 use databend_common_catalog::table::CompactionLimits;
@@ -119,7 +120,7 @@ async fn do_compact(ctx: Arc<QueryContext>, table: Arc<dyn Table>) -> Result<boo
         .compact_blocks(ctx.clone(), CompactionLimits::default())
         .await?;
 
-    let table_info = table.get_table_info().clone();
+    let table_info = ExtendedTableInfo::from_table(table.as_ref());
     if let Some((parts, snapshot)) = res {
         let table_meta_timestamps =
             ctx.get_table_meta_timestamps(table.as_ref(), Some(snapshot.clone()))?;

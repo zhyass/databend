@@ -110,11 +110,9 @@ impl IPhysicalPlan for DistributedInsertSelect {
             })?;
         }
 
-        let table = builder.ctx.build_table_by_table_info(
-            &self.table_info.table_info,
-            &self.table_info.branch_info,
-            None,
-        )?;
+        let table = builder
+            .ctx
+            .build_table_by_table_info(&self.table_info, None)?;
 
         let source_schema = insert_schema;
         PipelineBuilder::fill_and_reorder_columns(

@@ -243,27 +243,14 @@ pub fn statement_body(i: Input) -> IResult<Statement> {
     let merge = map(
         rule! {
             MERGE ~ #hint?
-            ~ INTO ~ #dot_separated_idents_1_to_3 ~ #table_alias?
+            ~ INTO ~ #table_ref ~ #table_alias?
             ~ USING ~ #mutation_source
             ~ ON ~ #expr ~ (#match_clause | #unmatch_clause)*
         },
-        |(
-            _,
-            opt_hints,
-            _,
-            (catalog, database, table),
-            target_alias,
-            _,
-            source,
-            _,
-            join_expr,
-            merge_options,
-        )| {
+        |(_, opt_hints, _, table, target_alias, _, source, _, join_expr, merge_options)| {
             Statement::MergeInto(MergeIntoStmt {
                 hints: opt_hints,
-                catalog,
-                database,
-                table_ident: table,
+                table,
                 source,
                 target_alias,
                 join_expr,
@@ -274,13 +261,11 @@ pub fn statement_body(i: Input) -> IResult<Statement> {
 
     let delete = map(
         rule! {
-            #with? ~ DELETE ~ #hint? ~ FROM ~ #dot_separated_idents_1_to_3 ~ #table_alias? ~ ( WHERE ~ ^#expr )?
+            #with? ~ DELETE ~ #hint? ~ FROM ~ #table_ref ~ #table_alias? ~ ( WHERE ~ ^#expr )?
         },
-        |(with, _, hints, _, (catalog, database, table), table_alias, opt_selection)| {
+        |(with, _, hints, _, table, table_alias, opt_selection)| {
             Statement::Delete(DeleteStmt {
                 hints,
-                catalog,
-                database,
                 table,
                 table_alias,
                 selection: opt_selection.map(|(_, selection)| selection),
@@ -291,26 +276,14 @@ pub fn statement_body(i: Input) -> IResult<Statement> {
 
     let update = map(
         rule! {
-            #with? ~ UPDATE ~ #hint? ~ #dot_separated_idents_1_to_3 ~ #table_alias?
+            #with? ~ UPDATE ~ #hint? ~ #table_ref ~ #table_alias?
             ~ SET ~ ^#comma_separated_list1(mutation_update_expr)
             ~ ( FROM ~ #mutation_source )?
             ~ ( WHERE ~ ^#expr )?
         },
-        |(
-            with,
-            _,
-            hints,
-            (catalog, database, table),
-            table_alias,
-            _,
-            update_list,
-            from,
-            opt_selection,
-        )| {
+        |(with, _, hints, table, table_alias, _, update_list, from, opt_selection)| {
             Statement::Update(UpdateStmt {
                 hints,
-                catalog,
-                database,
                 table,
                 table_alias,
                 update_list,
@@ -1147,24 +1120,16 @@ pub fn statement_body(i: Input) -> IResult<Statement> {
     );
     let truncate_table = map(
         rule! {
-            TRUNCATE ~ TABLE ~ #dot_separated_idents_1_to_3
+            TRUNCATE ~ TABLE ~ #table_ref
         },
-        |(_, _, (catalog, database, table))| {
-            Statement::TruncateTable(TruncateTableStmt {
-                catalog,
-                database,
-                table,
-            })
-        },
+        |(_, _, table)| Statement::TruncateTable(TruncateTableStmt { table }),
     );
     let optimize_table = map(
         rule! {
-            OPTIMIZE ~ TABLE ~ #dot_separated_idents_1_to_3 ~ #optimize_table_action ~ ( LIMIT ~ #literal_u64 )?
+            OPTIMIZE ~ TABLE ~ #optimize_table_action ~ ( LIMIT ~ #literal_u64 )?
         },
-        |(_, _, (catalog, database, table), action, opt_limit)| {
+        |(_, _, (table, action), opt_limit)| {
             Statement::OptimizeTable(OptimizeTableStmt {
-                catalog,
-                database,
                 table,
                 action,
                 limit: opt_limit.map(|(_, limit)| limit),
@@ -3108,13 +3073,11 @@ fn into_clause(i: Input) -> IResult<IntoClause> {
     map(
         rule! {
             INTO
-            ~ #dot_separated_idents_1_to_3
+            ~ #table_ref
             ~ ( "(" ~ #comma_separated_list1(ident) ~ ")" )?
             ~ (VALUES ~ "(" ~ #comma_separated_list1(source_expr) ~ ")" )?
         },
-        |(_, (catalog, database, table), opt_target_columns, opt_source_columns)| IntoClause {
-            catalog,
-            database,
+        |(_, table, opt_target_columns, opt_source_columns)| IntoClause {
             table,
             target_columns: opt_target_columns
                 .map(|(_, columns, _)| columns)
@@ -3147,7 +3110,7 @@ pub fn replace_stmt(allow_raw: bool) -> impl FnMut(Input) -> IResult<Statement> 
         map(
             rule! {
                 REPLACE ~ #hint? ~ INTO?
-                ~ #dot_separated_idents_1_to_3
+                ~ #table_ref
                 ~ ( "(" ~ #comma_separated_list1(ident) ~ ")" )?
                 ~ ON ~ CONFLICT? ~ "(" ~ #comma_separated_list1(ident) ~ ")"
                 ~ ( DELETE ~ WHEN ~ ^#expr )?
@@ -3157,7 +3120,7 @@ pub fn replace_stmt(allow_raw: bool) -> impl FnMut(Input) -> IResult<Statement> 
                 _,
                 opt_hints,
                 _,
-                (catalog, database, table),
+                table,
                 opt_columns,
                 _,
                 opt_conflict,
@@ -3169,8 +3132,6 @@ pub fn replace_stmt(allow_raw: bool) -> impl FnMut(Input) -> IResult<Statement> 
             )| {
                 Statement::Replace(ReplaceStmt {
                     hints: opt_hints,
-                    catalog,
-                    database,
                     table,
                     is_conflict: opt_conflict.is_some(),
                     on_conflict_columns,
@@ -3269,11 +3230,9 @@ pub fn mutation_source(i: Input) -> IResult<MutationSource> {
     });
 
     let source_table = map(
-        rule!(#dot_separated_idents_1_to_3 ~ #with_options? ~ #table_alias?),
-        |((catalog, database, table), with_options, alias)| MutationSource::Table {
-            catalog,
-            database,
-            table,
+        rule!(#table_ref ~ #with_options? ~ #table_alias?),
+        |(table, with_options, alias)| MutationSource::Table {
+            table: Box::new(table),
             with_options,
             alias,
         },
@@ -4950,20 +4909,46 @@ pub fn add_column_option(i: Input) -> IResult<AddColumnOption> {
     .parse(i)
 }
 
-pub fn optimize_table_action(i: Input) -> IResult<OptimizeTableAction> {
+pub fn optimize_table_action(i: Input) -> IResult<(TableRef, OptimizeTableAction)> {
     alt((
-        value(OptimizeTableAction::All, rule! { ALL }),
         map(
-            rule! { PURGE ~ (BEFORE ~ ^#travel_point)? },
-            |(_, opt_travel_point)| OptimizeTableAction::Purge {
-                before: opt_travel_point.map(|(_, p)| p),
+            rule! { #dot_separated_idents_1_to_3 ~ ALL },
+            |((catalog, database, table), _)| {
+                (
+                    TableRef {
+                        catalog,
+                        database,
+                        table,
+                        branch: None,
+                    },
+                    OptimizeTableAction::All,
+                )
             },
         ),
-        map(rule! { COMPACT ~ SEGMENT? }, |(_, opt_segment)| {
-            OptimizeTableAction::Compact {
-                target: opt_segment.map_or(CompactTarget::Block, |_| CompactTarget::Segment),
-            }
-        }),
+        map(
+            rule! { #dot_separated_idents_1_to_3 ~ PURGE ~ (BEFORE ~ ^#travel_point)? },
+            |((catalog, database, table), _, opt_travel_point)| {
+                (
+                    TableRef {
+                        catalog,
+                        database,
+                        table,
+                        branch: None,
+                    },
+                    OptimizeTableAction::Purge {
+                        before: opt_travel_point.map(|(_, p)| p),
+                    },
+                )
+            },
+        ),
+        map(
+            rule! {  #table_ref ~ COMPACT ~ SEGMENT? },
+            |(table, _, opt_segment)| {
+                (table, OptimizeTableAction::Compact {
+                    target: opt_segment.map_or(CompactTarget::Block, |_| CompactTarget::Segment),
+                })
+            },
+        ),
     ))
     .parse(i)
 }

@@ -47,6 +47,7 @@ impl Interpreter for OptimizeCompactSegmentInterpreter {
 
     #[async_backtrace::framed]
     async fn execute2(&self) -> Result<PipelineBuildResult> {
+        let branch = self.plan.branch.as_deref();
         let lock_guard = self
             .ctx
             .clone()
@@ -54,16 +55,18 @@ impl Interpreter for OptimizeCompactSegmentInterpreter {
                 &self.plan.catalog,
                 &self.plan.database,
                 &self.plan.table,
+                branch,
                 &LockTableOption::LockWithRetry,
             )
             .await?;
 
         let catalog = self.ctx.get_catalog(&self.plan.catalog).await?;
         let table = catalog
-            .get_table(
+            .get_table_with_branch(
                 &self.ctx.get_tenant(),
                 &self.plan.database,
                 &self.plan.table,
+                branch,
             )
             .await?;
         // check mutability

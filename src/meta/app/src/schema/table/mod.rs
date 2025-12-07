@@ -871,7 +871,8 @@ pub struct UpdateTableMetaReq {
     pub table_id: u64,
     pub seq: MatchSeq,
     pub new_table_meta: TableMeta,
-    pub base_snapshot_location: Option<String>,
+    // base snapshot location with branch id
+    pub base_snapshot_locations: HashMap<Option<u64>, Option<String>>,
     /// Optional optimistic LVT check.
     pub lvt_check: Option<TableLvtCheck>,
 }

@@ -2733,7 +2733,7 @@ impl SchemaApiTestSuite {
                     table_id,
                     seq: MatchSeq::Exact(table_version),
                     new_table_meta: new_table_meta.clone(),
-                    base_snapshot_location: None,
+                    base_snapshot_locations: HashMap::new(),
                     lvt_check: None,
                 };
 
@@ -2759,7 +2759,7 @@ impl SchemaApiTestSuite {
                     table_id,
                     seq: MatchSeq::Exact(table_version + 1),
                     new_table_meta: new_table_meta.clone(),
-                    base_snapshot_location: None,
+                    base_snapshot_locations: HashMap::new(),
                     lvt_check: None,
                 };
                 let res = mt
@@ -2786,7 +2786,7 @@ impl SchemaApiTestSuite {
                     table_id,
                     seq: MatchSeq::Exact(table_version),
                     new_table_meta: new_table_meta.clone(),
-                    base_snapshot_location: None,
+                    base_snapshot_locations: HashMap::new(),
                     lvt_check: None,
                 };
                 let res = mt
@@ -2868,7 +2868,7 @@ impl SchemaApiTestSuite {
                     table_id,
                     seq: MatchSeq::Exact(table_version),
                     new_table_meta: new_table_meta.clone(),
-                    base_snapshot_location: None,
+                    base_snapshot_locations: HashMap::new(),
                     lvt_check: None,
                 };
                 mt.update_multi_table_meta(UpdateMultiTableMetaReq {
@@ -2925,7 +2925,7 @@ impl SchemaApiTestSuite {
                     table_id,
                     seq: MatchSeq::Exact(table_version),
                     new_table_meta: new_table_meta.clone(),
-                    base_snapshot_location: None,
+                    base_snapshot_locations: HashMap::new(),
                     lvt_check: None,
                 };
                 mt.update_multi_table_meta(UpdateMultiTableMetaReq {
@@ -2982,7 +2982,7 @@ impl SchemaApiTestSuite {
                     table_id,
                     seq: MatchSeq::Exact(table_version),
                     new_table_meta: new_table_meta.clone(),
-                    base_snapshot_location: None,
+                    base_snapshot_locations: HashMap::new(),
                     lvt_check: None,
                 };
                 let result = mt
@@ -3018,7 +3018,7 @@ impl SchemaApiTestSuite {
                     table_id,
                     seq: MatchSeq::Exact(table.ident.seq),
                     new_table_meta: new_table_meta.clone(),
-                    base_snapshot_location: None,
+                    base_snapshot_locations: HashMap::new(),
                     lvt_check: Some(TableLvtCheck {
                         tenant: tenant.clone(),
                         time: small_ts,
@@ -3045,7 +3045,7 @@ impl SchemaApiTestSuite {
                     table_id,
                     seq: MatchSeq::Exact(table.ident.seq),
                     new_table_meta: new_table_meta.clone(),
-                    base_snapshot_location: None,
+                    base_snapshot_locations: HashMap::new(),
                     lvt_check: Some(TableLvtCheck {
                         tenant: tenant.clone(),
                         time: small_ts,
@@ -3067,7 +3067,7 @@ impl SchemaApiTestSuite {
                     table_id,
                     seq: MatchSeq::Exact(table.ident.seq),
                     new_table_meta: ok_table_meta.clone(),
-                    base_snapshot_location: None,
+                    base_snapshot_locations: HashMap::new(),
                     lvt_check: Some(TableLvtCheck {
                         tenant: tenant.clone(),
                         time: big_time,
@@ -4417,7 +4417,7 @@ impl SchemaApiTestSuite {
                 table_id,
                 seq: MatchSeq::Any,
                 new_table_meta: table_meta.clone(),
-                base_snapshot_location: None,
+                base_snapshot_locations: HashMap::new(),
                 lvt_check: None,
             };
 
@@ -4565,7 +4565,7 @@ impl SchemaApiTestSuite {
                 table_id,
                 seq: MatchSeq::Any,
                 new_table_meta: create_table_meta.clone(),
-                base_snapshot_location: None,
+                base_snapshot_locations: HashMap::new(),
                 lvt_check: None,
             };
 
@@ -4777,7 +4777,7 @@ impl SchemaApiTestSuite {
                 table_id,
                 seq: MatchSeq::Any,
                 new_table_meta: table_meta.clone(),
-                base_snapshot_location: None,
+                base_snapshot_locations: HashMap::new(),
                 lvt_check: None,
             };
 
@@ -6570,7 +6570,7 @@ impl SchemaApiTestSuite {
                 table_id,
                 seq: MatchSeq::Any,
                 new_table_meta: table_meta(created_on),
-                base_snapshot_location: None,
+                base_snapshot_locations: HashMap::new(),
                 lvt_check: None,
             };
 
@@ -6622,7 +6622,7 @@ impl SchemaApiTestSuite {
                 table_id,
                 seq: MatchSeq::Any,
                 new_table_meta: table_meta(created_on),
-                base_snapshot_location: None,
+                base_snapshot_locations: HashMap::new(),
                 lvt_check: None,
             };
 
@@ -7569,13 +7569,13 @@ impl SchemaApiTestSuite {
         let tenant = Tenant::new_literal(tenant_name);
 
         let mut util = DbTableHarness::new(mt, tenant_name, "db1", "tb1", "eng1");
-        let table_id;
+        let id;
 
         info!("--- prepare db and table");
         {
             util.create_db().await?;
             let (tid, _table_meta) = util.create_table().await?;
-            table_id = tid;
+            id = tid;
         }
 
         {
@@ -7583,7 +7583,7 @@ impl SchemaApiTestSuite {
             let req1 = CreateLockRevReq {
                 lock_key: LockKey::Table {
                     tenant: tenant.clone(),
-                    table_id,
+                    id,
                 },
                 ttl: std::time::Duration::from_secs(2),
                 user: "root".to_string(),
@@ -7596,7 +7596,7 @@ impl SchemaApiTestSuite {
             let req2 = CreateLockRevReq {
                 lock_key: LockKey::Table {
                     tenant: tenant.clone(),
-                    table_id,
+                    id,
                 },
                 ttl: std::time::Duration::from_secs(2),
                 user: "root".to_string(),
@@ -7610,7 +7610,7 @@ impl SchemaApiTestSuite {
             let req3 = ListLockRevReq {
                 lock_key: LockKey::Table {
                     tenant: tenant.clone(),
-                    table_id,
+                    id,
                 },
             };
             let res3 = mt.list_lock_revisions(req3).await?;
@@ -7622,7 +7622,7 @@ impl SchemaApiTestSuite {
             let req4 = ExtendLockRevReq {
                 lock_key: LockKey::Table {
                     tenant: tenant.clone(),
-                    table_id,
+                    id,
                 },
                 ttl: std::time::Duration::from_secs(4),
                 revision: res2.revision,
@@ -7635,7 +7635,7 @@ impl SchemaApiTestSuite {
             let req5 = ListLockRevReq {
                 lock_key: LockKey::Table {
                     tenant: tenant.clone(),
-                    table_id,
+                    id,
                 },
             };
             let res5 = mt.list_lock_revisions(req5).await?;
@@ -7646,7 +7646,7 @@ impl SchemaApiTestSuite {
             let req6 = DeleteLockRevReq {
                 lock_key: LockKey::Table {
                     tenant: tenant.clone(),
-                    table_id,
+                    id,
                 },
                 revision: res2.revision,
             };
@@ -7654,7 +7654,7 @@ impl SchemaApiTestSuite {
 
             info!("--- check table locks is empty");
             let req7 = ListLockRevReq {
-                lock_key: LockKey::Table { tenant, table_id },
+                lock_key: LockKey::Table { tenant, id },
             };
             let res7 = mt.list_lock_revisions(req7).await?;
             assert_eq!(res7.len(), 0);
@@ -8155,7 +8155,7 @@ impl SchemaApiTestSuite {
                 table_id,
                 seq: MatchSeq::Any,
                 new_table_meta: table_meta(created_on),
-                base_snapshot_location: None,
+                base_snapshot_locations: HashMap::new(),
                 lvt_check: None,
             };
 
@@ -8215,7 +8215,7 @@ impl SchemaApiTestSuite {
                 table_id,
                 seq: MatchSeq::Any,
                 new_table_meta: table_meta(created_on),
-                base_snapshot_location: None,
+                base_snapshot_locations: HashMap::new(),
                 lvt_check: None,
             };
 
@@ -8272,7 +8272,7 @@ impl SchemaApiTestSuite {
                 table_id,
                 seq: MatchSeq::Any,
                 new_table_meta: table_meta(created_on),
-                base_snapshot_location: None,
+                base_snapshot_locations: HashMap::new(),
                 lvt_check: None,
             };
 

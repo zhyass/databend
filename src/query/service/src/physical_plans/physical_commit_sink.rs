@@ -15,11 +15,11 @@
 use std::any::Any;
 use std::sync::Arc;
 
+use databend_common_catalog::plan::ExtendedTableInfo;
 use databend_common_catalog::plan::ReclusterInfoSideCar;
 use databend_common_catalog::table_context::TableContext;
 use databend_common_exception::Result;
 use databend_common_expression::DataSchemaRef;
-use databend_common_meta_app::schema::TableInfo;
 use databend_common_meta_app::schema::UpdateStreamMetaReq;
 use databend_common_pipeline::core::ExecutionInfo;
 use databend_common_pipeline_transforms::TransformPipelineHelper;
@@ -48,7 +48,7 @@ pub struct CommitSink {
     pub meta: PhysicalPlanMeta,
     pub input: PhysicalPlan,
     pub snapshot: Option<Arc<TableSnapshot>>,
-    pub table_info: TableInfo,
+    pub table_info: ExtendedTableInfo,
     pub commit_type: CommitType,
     pub update_stream_meta: Vec<UpdateStreamMetaReq>,
     pub deduplicated_label: Option<String>,
@@ -105,7 +105,7 @@ impl IPhysicalPlan for CommitSink {
 
         let table = builder
             .ctx
-            .build_table_by_table_info(&self.table_info, &None, None)?;
+            .build_table_by_table_info(&self.table_info, None)?;
         let table = FuseTable::try_from_table(table.as_ref())?;
 
         builder.main_pipeline.try_resize(1)?;

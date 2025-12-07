@@ -289,7 +289,7 @@ impl FuseTable {
                 table_id,
                 seq: MatchSeq::Exact(table_version),
                 new_table_meta: new_table_meta.clone(),
-                base_snapshot_location: self.snapshot_loc(),
+                base_snapshot_locations: self.base_snapshot_locations(),
                 lvt_check: None,
             };
             update_table_metas.push((req, table_info.clone()));
@@ -406,7 +406,7 @@ impl FuseTable {
                 &mut snapshot_tobe_committed,
                 ctx.txn_mgr(),
                 Some(base_snapshot.clone()),
-                self.get_id(),
+                self.get_table_id(),
             )?;
 
             match self

@@ -55,6 +55,7 @@ pub struct Mutation {
     pub catalog_name: String,
     pub database_name: String,
     pub table_name: String,
+    pub branch_name: Option<String>,
     pub table_name_alias: Option<String>,
     pub bind_context: Box<BindContext>,
     pub required_columns: Box<ColumnSet>,

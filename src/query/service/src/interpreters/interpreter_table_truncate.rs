@@ -66,7 +66,7 @@ impl Interpreter for TruncateTableInterpreter {
     #[async_backtrace::framed]
     #[fastrace::trace]
     async fn execute2(&self) -> Result<PipelineBuildResult> {
-        // try add lock table.
+        // try to add lock table.
         let lock_guard = self
             .ctx
             .clone()
@@ -74,13 +74,20 @@ impl Interpreter for TruncateTableInterpreter {
                 &self.plan.catalog,
                 &self.plan.database,
                 &self.plan.table,
+                self.plan.branch.as_deref(),
                 &LockTableOption::LockWithRetry,
             )
             .await?;
 
         let table = self
             .ctx
-            .get_table(&self.plan.catalog, &self.plan.database, &self.plan.table)
+            .get_table_with_batch(
+                &self.plan.catalog,
+                &self.plan.database,
+                &self.plan.table,
+                self.plan.branch.as_deref(),
+                None,
+            )
             .await?;
         // check mutability
         table.check_mutable()?;

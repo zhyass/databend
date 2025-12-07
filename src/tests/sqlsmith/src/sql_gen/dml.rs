@@ -137,11 +137,15 @@ impl<'a, R: Rng + 'a> SqlGenerator<'a, R> {
 
         DeleteStmt {
             hints,
-            catalog: None,
-            database: table
-                .db_name
-                .map(|name| Identifier::from_name(None, name.name)),
-            table: Identifier::from_name(None, table.name.name.clone()),
+            table: TableRef {
+                catalog: None,
+                database: table
+                    .db_name
+                    .map(|name| Identifier::from_name(None, name.name)),
+                table: Identifier::from_name(None, table.name.name.clone()),
+                // TODO
+                branch: None,
+            },
             table_alias: None,
             selection,
             with: None,
@@ -168,11 +172,15 @@ impl<'a, R: Rng + 'a> SqlGenerator<'a, R> {
         }
         UpdateStmt {
             hints,
-            catalog: None,
-            database: table
-                .db_name
-                .map(|name| Identifier::from_name(None, name.name)),
-            table: Identifier::from_name(None, table.name.name.clone()),
+            table: TableRef {
+                catalog: None,
+                database: table
+                    .db_name
+                    .map(|name| Identifier::from_name(None, name.name)),
+                table: Identifier::from_name(None, table.name.name.clone()),
+                // TODO
+                branch: None,
+            },
             table_alias: None,
             update_list,
             from: None,
@@ -201,9 +209,13 @@ impl<'a, R: Rng + 'a> SqlGenerator<'a, R> {
 
         ReplaceStmt {
             hints,
-            catalog: None,
-            database: table.db_name.clone(),
-            table: table.name.clone(),
+            table: TableRef {
+                catalog: None,
+                database: table.db_name,
+                table: table.name,
+                // TODO
+                branch: None,
+            },
             is_conflict: true,
             on_conflict_columns,
             columns,
@@ -311,9 +323,13 @@ impl<'a, R: Rng + 'a> SqlGenerator<'a, R> {
 
         MergeIntoStmt {
             hints,
-            catalog: None,
-            database: table.db_name.clone(),
-            table_ident: table.name.clone(),
+            table: TableRef {
+                catalog: None,
+                database: table.db_name,
+                table: table.name,
+                // TODO
+                branch: None,
+            },
             source,
             target_alias: None,
             join_expr,

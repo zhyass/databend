@@ -107,9 +107,10 @@ impl MutationExpression {
                 let target_table_index = binder
                     .metadata
                     .read()
-                    .get_table_index(
+                    .get_table_index_with_branch(
                         Some(target_table_identifier.database_name().as_str()),
                         target_table_identifier.table_name().as_str(),
+                        target_table_identifier.branch_name().as_deref(),
                     )
                     .ok_or_else(|| ErrorCode::Internal("Can't get target table index"))?;
 
@@ -217,9 +218,10 @@ impl MutationExpression {
                 let target_table_index = binder
                     .metadata
                     .read()
-                    .get_table_index(
+                    .get_table_index_with_branch(
                         Some(target_table_identifier.database_name().as_str()),
                         target_table_identifier.table_name().as_str(),
+                        target_table_identifier.branch_name().as_deref(),
                     )
                     .ok_or_else(|| ErrorCode::Internal("Can't get target table index"))?;
 

@@ -18,6 +18,7 @@ use std::time::Duration;
 use std::time::SystemTime;
 
 use databend_common_catalog::lock::LockTableOption;
+use databend_common_catalog::plan::ExtendedTableInfo;
 use databend_common_catalog::plan::Filters;
 use databend_common_catalog::plan::PartInfoType;
 use databend_common_catalog::plan::PushDownInfo;
@@ -33,7 +34,6 @@ use databend_common_expression::type_check::check_function;
 use databend_common_functions::BUILTIN_FUNCTIONS;
 use databend_common_license::license::Feature;
 use databend_common_license::license_manager::LicenseManagerSwitch;
-use databend_common_meta_app::schema::TableInfo;
 use databend_common_pipeline::core::ExecutionInfo;
 use databend_common_pipeline::core::always_callback;
 use databend_common_sql::ClusterKeyNormalizer;
@@ -208,7 +208,7 @@ impl ReclusterTableInterpreter {
         let lock_guard = self
             .ctx
             .clone()
-            .acquire_table_lock(catalog, database, table, &self.lock_opt)
+            .acquire_table_lock(catalog, database, table, None, &self.lock_opt)
             .await?;
 
         let tbl = self.ctx.get_table(catalog, database, table).await?;
@@ -313,7 +313,10 @@ impl ReclusterTableInterpreter {
         };
 
         let settings = self.ctx.get_settings();
-        let table_info = tbl.get_table_info().clone();
+        let table_info = ExtendedTableInfo {
+            table_info: tbl.get_table_info().clone(),
+            branch_info: tbl.get_branch_info().cloned(),
+        };
         let scan_progress_value = self.ctx.get_scan_progress_value();
 
         let block_thresholds = tbl.get_block_thresholds();
@@ -468,7 +471,6 @@ impl ReclusterTableInterpreter {
         plan = PhysicalPlan::new(HilbertPartition {
             rows_per_block,
             table_meta_timestamps,
-
             input: plan,
             table_info: table_info.clone(),
             num_partitions: total_partitions,
@@ -506,7 +508,7 @@ impl ReclusterTableInterpreter {
             .ctx
             .get_table_meta_timestamps(tbl.as_ref(), Some(snapshot.clone()))?;
 
-        let table_info = tbl.get_table_info().clone();
+        let table_info = ExtendedTableInfo::from_table(tbl.as_ref());
         let is_distributed = parts.is_distributed(self.ctx.clone());
         let plan = match parts {
             ReclusterParts::Recluster {
@@ -518,7 +520,6 @@ impl ReclusterTableInterpreter {
                 let root = PhysicalPlan::new(Recluster {
                     tasks,
                     table_meta_timestamps,
-
                     table_info: table_info.clone(),
                     meta: PhysicalPlanMeta::new("Recluster"),
                 });
@@ -709,7 +710,7 @@ impl ReclusterTableInterpreter {
     fn add_commit_sink(
         mut input: PhysicalPlan,
         is_distributed: bool,
-        table_info: TableInfo,
+        table_info: ExtendedTableInfo,
         snapshot: Arc<TableSnapshot>,
         merge_meta: bool,
         recluster_info: Option<ReclusterInfoSideCar>,

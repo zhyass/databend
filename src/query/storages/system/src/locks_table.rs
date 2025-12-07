@@ -124,7 +124,7 @@ impl AsyncSystemTable for LocksTable {
             };
             let lock_infos = ctl.list_locks(req).await?;
             for info in lock_infos {
-                lock_table_id.push(info.table_id);
+                lock_table_id.push(info.id);
                 lock_revision.push(info.revision);
                 lock_type.push(info.meta.lock_type.to_string().clone());
                 if info.meta.acquired_on.is_some() {
@@ -162,7 +162,7 @@ impl AsyncSystemTable for LocksTable {
 impl LocksTable {
     pub fn schema() -> TableSchemaRef {
         TableSchemaRefExt::create(vec![
-            TableField::new("table_id", TableDataType::Number(NumberDataType::UInt64)),
+            TableField::new("table_ident", TableDataType::Number(NumberDataType::UInt64)),
             TableField::new("revision", TableDataType::Number(NumberDataType::UInt64)),
             TableField::new("type", TableDataType::String),
             TableField::new("status", TableDataType::String),

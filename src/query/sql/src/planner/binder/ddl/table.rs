@@ -121,6 +121,7 @@ use crate::binder::Visibility;
 use crate::binder::get_storage_params_from_options;
 use crate::binder::parse_storage_params_from_uri;
 use crate::binder::scalar::ScalarBinder;
+use crate::binder::util::TableIdentifier;
 use crate::optimizer::ir::SExpr;
 use crate::parse_computed_expr_to_string;
 use crate::planner::binder::ddl::database::DEFAULT_STORAGE_CONNECTION;
@@ -1311,6 +1312,7 @@ impl Binder {
                                 &catalog,
                                 &database,
                                 &table,
+                                branch.as_deref(),
                                 &LockTableOption::LockWithRetry,
                             )
                             .await?
@@ -1607,19 +1609,21 @@ impl Binder {
         &mut self,
         stmt: &TruncateTableStmt,
     ) -> Result<Plan> {
-        let TruncateTableStmt {
-            catalog,
-            database,
-            table,
-        } = stmt;
+        let TruncateTableStmt { table } = stmt;
 
-        let (catalog, database, table) =
-            self.normalize_object_identifier_triple(catalog, database, table);
+        let table_identifier = TableIdentifier::new_with_ref(self, table, &None);
+        let (catalog, database, table, branch) = (
+            table_identifier.catalog_name(),
+            table_identifier.database_name(),
+            table_identifier.table_name(),
+            table_identifier.branch_name(),
+        );
 
         Ok(Plan::TruncateTable(Box::new(TruncateTablePlan {
             catalog,
             database,
             table,
+            branch,
         })))
     }
 
@@ -1630,22 +1634,27 @@ impl Binder {
         stmt: &OptimizeTableStmt,
     ) -> Result<Plan> {
         let OptimizeTableStmt {
-            catalog,
-            database,
             table,
             action: ast_action,
             limit,
         } = stmt;
 
-        let (catalog, database, table) =
-            self.normalize_object_identifier_triple(catalog, database, table);
+        let table_identifier = TableIdentifier::new_with_ref(self, table, &None);
+        let (catalog, database, table, branch) = (
+            table_identifier.catalog_name(),
+            table_identifier.database_name(),
+            table_identifier.table_name(),
+            table_identifier.branch_name(),
+        );
         let limit = limit.map(|v| v as usize);
         let plan = match ast_action {
             AstOptimizeTableAction::All => {
+                debug_assert!(branch.is_none());
                 let compact_block = RelOperator::CompactBlock(OptimizeCompactBlock {
                     catalog,
                     database,
                     table,
+                    branch: None,
                     limit: CompactionLimits {
                         segment_limit: limit,
                         block_limit: None,
@@ -1658,6 +1667,7 @@ impl Binder {
                 }
             }
             AstOptimizeTableAction::Purge { before } => {
+                debug_assert!(branch.is_none());
                 let instant = if let Some(point) = before {
                     let point = self.resolve_data_travel_point(bind_context, point)?;
                     Some(point)
@@ -1678,6 +1688,7 @@ impl Binder {
                         catalog,
                         database,
                         table,
+                        branch,
                         limit: CompactionLimits {
                             segment_limit: limit,
                             block_limit: None,
@@ -1694,6 +1705,7 @@ impl Binder {
                         catalog,
                         database,
                         table,
+                        branch,
                         num_segment_limit: limit,
                     }))
                 }

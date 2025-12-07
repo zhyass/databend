@@ -19,20 +19,20 @@ use crate::tenant_key::raw::TIdentRaw;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TableIdRevision {
-    table_id: u64,
+    id: u64,
     revision: u64,
 }
 
 impl kvapi::KeyCodec for TableIdRevision {
     fn encode_key(&self, b: kvapi::KeyBuilder) -> kvapi::KeyBuilder {
-        b.push_u64(self.table_id).push_u64(self.revision)
+        b.push_u64(self.id).push_u64(self.revision)
     }
 
     fn decode_key(p: &mut kvapi::KeyParser) -> Result<Self, kvapi::KeyError> {
-        let table_id = p.next_u64()?;
+        let id = p.next_u64()?;
         let revision = p.next_u64()?;
 
-        Ok(Self { table_id, revision })
+        Ok(Self { id, revision })
     }
 }
 
@@ -46,12 +46,12 @@ pub use kvapi_impl::Resource;
 use crate::tenant::ToTenant;
 
 impl TableLockIdent {
-    pub fn new(tenant: impl ToTenant, table_id: u64, revision: u64) -> Self {
-        Self::new_generic(tenant, TableIdRevision { table_id, revision })
+    pub fn new(tenant: impl ToTenant, id: u64, revision: u64) -> Self {
+        Self::new_generic(tenant, TableIdRevision { id, revision })
     }
 
-    pub fn table_id(&self) -> u64 {
-        self.name().table_id
+    pub fn ident_id(&self) -> u64 {
+        self.name().id
     }
 
     pub fn revision(&self) -> u64 {

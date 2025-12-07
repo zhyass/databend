@@ -53,6 +53,7 @@ use databend_common_catalog::lock::LockTableOption;
 use databend_common_catalog::merge_into_join::MergeIntoJoin;
 use databend_common_catalog::plan::DataSourceInfo;
 use databend_common_catalog::plan::DataSourcePlan;
+use databend_common_catalog::plan::ExtendedTableInfo;
 use databend_common_catalog::plan::ParquetReadOptions;
 use databend_common_catalog::plan::PartInfoPtr;
 use databend_common_catalog::plan::PartStatistics;
@@ -96,11 +97,9 @@ use databend_common_meta_app::principal::StageInfo;
 use databend_common_meta_app::principal::UserDefinedConnection;
 use databend_common_meta_app::principal::UserInfo;
 use databend_common_meta_app::principal::UserPrivilegeType;
-use databend_common_meta_app::schema::BranchInfo;
 use databend_common_meta_app::schema::CatalogType;
 use databend_common_meta_app::schema::DropTableByIdReq;
 use databend_common_meta_app::schema::GetTableCopiedFileReq;
-use databend_common_meta_app::schema::TableInfo;
 use databend_common_meta_app::schema::TableRefId;
 use databend_common_meta_app::storage::StorageParams;
 use databend_common_meta_app::tenant::Tenant;
@@ -215,10 +214,11 @@ impl QueryContext {
     /// Build fuse/system normal table by table info.
     pub fn build_table_by_table_info(
         &self,
-        table_info: &TableInfo,
-        branch_info: &Option<BranchInfo>,
+        table_info: &ExtendedTableInfo,
         table_args: Option<TableArgs>,
     ) -> Result<Arc<dyn Table>> {
+        let branch_info = &table_info.branch_info;
+        let table_info = &table_info.table_info;
         let catalog_name = table_info.catalog();
         let catalog =
             databend_common_base::runtime::block_on(self.shared.catalog_manager.get_catalog(
@@ -848,11 +848,9 @@ impl TableContext for QueryContext {
     /// This method builds a `dyn Table`, which provides table specific io methods the plan needs.
     fn build_table_from_source_plan(&self, plan: &DataSourcePlan) -> Result<Arc<dyn Table>> {
         match &plan.source_info {
-            DataSourceInfo::TableSource(extend_info) => self.build_table_by_table_info(
-                &extend_info.table_info,
-                &extend_info.branch_info,
-                plan.tbl_args.clone(),
-            ),
+            DataSourceInfo::TableSource(extend_info) => {
+                self.build_table_by_table_info(extend_info, plan.tbl_args.clone())
+            }
             DataSourceInfo::StageSource(stage_info) => {
                 self.build_external_by_table_info(stage_info, plan.tbl_args.clone())
             }
@@ -1575,7 +1573,7 @@ impl TableContext for QueryContext {
             .get_table_with_batch(catalog_name, database_name, table_name, branch_name, None)
             .await?;
         let ref_id = TableRefId {
-            table_id: table.get_id(),
+            table_id: table.get_table_id(),
             branch_id: table.get_branch_info().map(|b| b.branch_id()),
         };
 
@@ -1881,7 +1879,7 @@ impl TableContext for QueryContext {
         table: &dyn Table,
         previous_snapshot: Option<Arc<TableSnapshot>>,
     ) -> Result<TableMetaTimestamps> {
-        let table_id = table.get_id();
+        let table_id = table.get_table_id();
         let table_unique_id = table.get_unique_id();
 
         let cached_table_timestamps = {
@@ -2181,6 +2179,7 @@ impl TableContext for QueryContext {
         catalog_name: &str,
         db_name: &str,
         tbl_name: &str,
+        branch_name: Option<&str>,
         lock_opt: &LockTableOption,
     ) -> Result<Option<Arc<LockGuard>>> {
         let enabled_table_lock = self.get_settings().get_enable_table_lock().unwrap_or(false);
@@ -2190,14 +2189,15 @@ impl TableContext for QueryContext {
 
         let catalog = self.get_catalog(catalog_name).await?;
         let tbl = catalog
-            .get_table(&self.get_tenant(), db_name, tbl_name)
+            .get_table_with_branch(&self.get_tenant(), db_name, tbl_name, branch_name)
             .await?;
         if tbl.engine() != "FUSE" || tbl.is_read_only() || tbl.is_temp() {
             return Ok(None);
         }
 
         // Add table lock.
-        let table_lock = LockManager::create_table_lock(tbl.get_table_info().clone())?;
+        let table_lock =
+            LockManager::create_table_lock(tbl.get_table_info().catalog(), tbl.get_unique_id())?;
         let lock_guard = match lock_opt {
             LockTableOption::LockNoRetry => table_lock.try_lock(self.clone(), false).await?,
             LockTableOption::LockWithRetry => table_lock.try_lock(self.clone(), true).await?,

@@ -171,6 +171,7 @@ async fn compact_table(
             catalog: compact_target.catalog.clone(),
             database: compact_target.database.clone(),
             table: compact_target.table.clone(),
+            branch: None,
             limit: compaction_limits.clone(),
         });
         let s_expr = SExpr::create_leaf(Arc::new(compact_block));

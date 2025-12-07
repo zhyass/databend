@@ -15,13 +15,13 @@
 use std::any::Any;
 use std::sync::Arc;
 
+use databend_common_catalog::plan::ExtendedTableInfo;
 use databend_common_catalog::table::Table;
 use databend_common_exception::Result;
 use databend_common_expression::BlockThresholds;
 use databend_common_expression::DataSchema;
 use databend_common_expression::DataSchemaRef;
 use databend_common_expression::FieldIndex;
-use databend_common_meta_app::schema::TableInfo;
 use databend_common_pipeline::core::InputPort;
 use databend_common_pipeline::core::OutputPort;
 use databend_common_pipeline::core::Pipe;
@@ -48,7 +48,7 @@ pub struct ReplaceInto {
     pub meta: PhysicalPlanMeta,
     pub input: PhysicalPlan,
     pub block_thresholds: BlockThresholds,
-    pub table_info: TableInfo,
+    pub table_info: ExtendedTableInfo,
     pub on_conflicts: Vec<OnConflictField>,
     pub bloom_filter_column_indexes: Vec<FieldIndex>,
     pub segments: Vec<(usize, Location)>,
@@ -111,7 +111,7 @@ impl IPhysicalPlan for ReplaceInto {
         let segment_partition_num = std::cmp::min(self.segments.len(), max_threads as usize);
         let table = builder
             .ctx
-            .build_table_by_table_info(&self.table_info, &None, None)?;
+            .build_table_by_table_info(&self.table_info, None)?;
         let table = FuseTable::try_from_table(table.as_ref())?;
         let schema = DataSchema::from(table.schema()).into();
         let cluster_stats_gen = table.get_cluster_stats_gen(

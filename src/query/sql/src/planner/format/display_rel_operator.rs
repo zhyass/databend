@@ -491,9 +491,10 @@ fn merge_into_to_format_tree<I: IdHumanizer>(
     let table_index = merge_into
         .metadata
         .read()
-        .get_table_index(
+        .get_table_index_with_branch(
             Some(merge_into.database_name.as_str()),
             merge_into.table_name.as_str(),
+            merge_into.branch_name.as_deref(),
         )
         .unwrap();
 

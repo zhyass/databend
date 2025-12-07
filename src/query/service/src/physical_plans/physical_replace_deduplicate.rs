@@ -16,6 +16,7 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use databend_common_catalog::plan::ExtendedTableInfo;
 use databend_common_catalog::table::Table;
 use databend_common_exception::ErrorCode;
 use databend_common_exception::Result;
@@ -26,7 +27,6 @@ use databend_common_expression::FieldIndex;
 use databend_common_expression::RemoteExpr;
 use databend_common_expression::TableSchemaRef;
 use databend_common_functions::BUILTIN_FUNCTIONS;
-use databend_common_meta_app::schema::TableInfo;
 use databend_common_pipeline_transforms::TransformPipelineHelper;
 use databend_common_pipeline_transforms::blocks::TransformCastSchema;
 use databend_common_pipeline_transforms::build_compact_block_pipeline;
@@ -49,7 +49,7 @@ pub struct ReplaceDeduplicate {
     pub on_conflicts: Vec<OnConflictField>,
     pub bloom_filter_column_indexes: Vec<FieldIndex>,
     pub table_is_empty: bool,
-    pub table_info: TableInfo,
+    pub table_info: ExtendedTableInfo,
     pub target_schema: TableSchemaRef,
     pub select_ctx: Option<ReplaceSelectCtx>,
     pub table_level_range_index: HashMap<ColumnId, ColumnStatistics>,
@@ -106,7 +106,7 @@ impl IPhysicalPlan for ReplaceDeduplicate {
 
         let tbl = builder
             .ctx
-            .build_table_by_table_info(&self.table_info, &None, None)?;
+            .build_table_by_table_info(&self.table_info, None)?;
         let table = FuseTable::try_from_table(tbl.as_ref())?;
 
         let mut delete_column_idx = 0;

@@ -16,6 +16,7 @@ use std::any::Any;
 use std::collections::HashMap;
 
 use databend_common_base::runtime::Runtime;
+use databend_common_catalog::plan::ExtendedTableInfo;
 use databend_common_catalog::plan::Filters;
 use databend_common_catalog::plan::PartInfoType;
 use databend_common_catalog::plan::PartStatistics;
@@ -33,7 +34,6 @@ use databend_common_expression::FunctionContext;
 use databend_common_expression::type_check::check_function;
 use databend_common_expression::types::DataType;
 use databend_common_functions::BUILTIN_FUNCTIONS;
-use databend_common_meta_app::schema::TableInfo;
 use databend_common_pipeline::sources::OneBlockSource;
 use databend_common_pipeline_transforms::TransformPipelineHelper;
 use databend_common_pipeline_transforms::columns::TransformAddStreamColumns;
@@ -63,7 +63,7 @@ use crate::pipelines::PipelineBuilder;
 pub struct MutationSource {
     pub meta: PhysicalPlanMeta,
     pub table_index: IndexType,
-    pub table_info: TableInfo,
+    pub table_info: ExtendedTableInfo,
     pub filters: Option<Filters>,
     pub output_schema: DataSchemaRef,
     pub input_type: MutationType,
@@ -119,7 +119,7 @@ impl IPhysicalPlan for MutationSource {
     fn build_pipeline2(&self, builder: &mut PipelineBuilder) -> Result<()> {
         let table = builder
             .ctx
-            .build_table_by_table_info(&self.table_info, &None, None)?;
+            .build_table_by_table_info(&self.table_info, None)?;
 
         let table = FuseTable::try_from_table(table.as_ref())?.clone();
         let is_delete = self.input_type == MutationType::Delete;
@@ -132,7 +132,7 @@ impl IPhysicalPlan for MutationSource {
                     let meta = CommitMeta {
                         conflict_resolve_context: ConflictResolveContext::None,
                         new_segment_locs: vec![],
-                        table_id: table.get_id(),
+                        table_target_id: table.get_unique_id(),
                         virtual_schema: None,
                         hll: HashMap::new(),
                     };

@@ -16,6 +16,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use databend_common_catalog::lock::LockTableOption;
+use databend_common_catalog::plan::ExtendedTableInfo;
 use databend_common_catalog::plan::PartStatistics;
 use databend_common_catalog::plan::Partitions;
 use databend_common_catalog::table::TableExt;
@@ -140,6 +141,10 @@ impl MutationInterpreter {
         mutation: &databend_common_sql::plans::Mutation,
         build_res: &mut PipelineBuildResult,
     ) {
+        if mutation.branch_name.is_some() {
+            return;
+        }
+
         let hook_lock_opt = if mutation.lock_guard.is_some() {
             LockTableOption::NoLock
         } else {
@@ -204,10 +209,12 @@ pub async fn build_mutation_info(
     dry_run: bool,
 ) -> Result<MutationBuildInfo> {
     let table = ctx
-        .get_table(
+        .get_table_with_batch(
             &mutation.catalog_name,
             &mutation.database_name,
             &mutation.table_name,
+            mutation.branch_name.as_deref(),
+            None,
         )
         .await?;
     // Check if the table supports mutation.
@@ -222,7 +229,6 @@ pub async fn build_mutation_info(
     })?;
 
     let table_snapshot = fuse_table.read_table_snapshot().await?;
-    let table_info = fuse_table.get_table_info().clone();
     let update_stream_meta = dml_build_update_stream_req(ctx.clone()).await?;
     let (statistics, partitions) = mutation_source_partitions(
         ctx.clone(),
@@ -237,7 +243,10 @@ pub async fn build_mutation_info(
         ctx.get_table_meta_timestamps(table.as_ref(), table_snapshot.clone())?;
 
     Ok(MutationBuildInfo {
-        table_info,
+        table_info: ExtendedTableInfo {
+            table_info: fuse_table.get_table_info().clone(),
+            branch_info: fuse_table.get_branch_info().cloned(),
+        },
         table_snapshot,
         update_stream_meta,
         partitions,

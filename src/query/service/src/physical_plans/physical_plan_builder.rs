@@ -14,12 +14,12 @@
 
 use std::sync::Arc;
 
+use databend_common_catalog::plan::ExtendedTableInfo;
 use databend_common_catalog::plan::PartStatistics;
 use databend_common_catalog::plan::Partitions;
 use databend_common_catalog::table_context::TableContext;
 use databend_common_exception::Result;
 use databend_common_expression::FunctionContext;
-use databend_common_meta_app::schema::TableInfo;
 use databend_common_meta_app::schema::UpdateStreamMetaReq;
 use databend_common_sql::ColumnSet;
 use databend_common_sql::MetadataRef;
@@ -160,7 +160,7 @@ impl PhysicalPlanBuilder {
 
 #[derive(Clone)]
 pub struct MutationBuildInfo {
-    pub table_info: TableInfo,
+    pub table_info: ExtendedTableInfo,
     pub table_snapshot: Option<Arc<TableSnapshot>>,
     pub update_stream_meta: Vec<UpdateStreamMetaReq>,
     pub partitions: Partitions,

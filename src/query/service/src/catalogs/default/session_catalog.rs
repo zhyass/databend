@@ -669,37 +669,37 @@ impl Catalog for SessionCatalog {
     }
 
     async fn list_lock_revisions(&self, req: ListLockRevReq) -> Result<Vec<(u64, LockMeta)>> {
-        if is_temp_table_id(req.lock_key.get_table_id()) {
+        if is_temp_table_id(req.lock_key.get_target_id()) {
             return Ok(vec![]);
         }
         self.inner.list_lock_revisions(req).await
     }
 
     async fn create_lock_revision(&self, req: CreateLockRevReq) -> Result<CreateLockRevReply> {
-        if is_temp_table_id(req.lock_key.get_table_id()) {
+        if is_temp_table_id(req.lock_key.get_target_id()) {
             return Err(ErrorCode::StorageUnsupported(format!(
                 "CreateLockRevision: table id {} is a temporary table id",
-                req.lock_key.get_table_id()
+                req.lock_key.get_target_id()
             )));
         }
         self.inner.create_lock_revision(req).await
     }
 
     async fn extend_lock_revision(&self, req: ExtendLockRevReq) -> Result<()> {
-        if is_temp_table_id(req.lock_key.get_table_id()) {
+        if is_temp_table_id(req.lock_key.get_target_id()) {
             return Err(ErrorCode::StorageUnsupported(format!(
                 "ExtendLockRevision: table id {} is a temporary table id",
-                req.lock_key.get_table_id()
+                req.lock_key.get_target_id()
             )));
         }
         self.inner.extend_lock_revision(req).await
     }
 
     async fn delete_lock_revision(&self, req: DeleteLockRevReq) -> Result<()> {
-        if is_temp_table_id(req.lock_key.get_table_id()) {
+        if is_temp_table_id(req.lock_key.get_target_id()) {
             return Err(ErrorCode::StorageUnsupported(format!(
                 "DeleteLockRevision: table id {} is a temporary table id",
-                req.lock_key.get_table_id()
+                req.lock_key.get_target_id()
             )));
         }
         self.inner.delete_lock_revision(req).await

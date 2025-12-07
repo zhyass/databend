@@ -22,7 +22,6 @@ use databend_common_expression::FromData;
 use databend_common_expression::TableField;
 use databend_common_expression::TableSchemaRef;
 use databend_common_expression::types::StringType;
-use databend_common_meta_types::MetaId;
 use databend_common_pipeline::core::SharedLockGuard;
 
 use super::insert::format_insert_source;
@@ -34,7 +33,7 @@ pub struct Replace {
     pub catalog: String,
     pub database: String,
     pub table: String,
-    pub table_id: MetaId,
+    pub branch: Option<String>,
     pub on_conflict_fields: Vec<TableField>,
     pub schema: TableSchemaRef,
     pub source: InsertInputSource,
@@ -47,6 +46,7 @@ impl PartialEq for Replace {
         self.catalog == other.catalog
             && self.database == other.database
             && self.table == other.table
+            && self.branch == other.branch
             && self.schema == other.schema
             && self.on_conflict_fields == other.on_conflict_fields
     }
@@ -72,12 +72,16 @@ impl Replace {
             catalog,
             database,
             table,
+            branch,
             source,
             on_conflict_fields,
             ..
         } = self;
 
-        let table_name = format!("{}.{}.{}", catalog, database, table);
+        let table_name = match branch {
+            Some(branch) => format!("{}.{}.{}/{}", catalog, database, table, branch),
+            None => format!("{}.{}.{}", catalog, database, table),
+        };
         let on_columns = on_conflict_fields
             .iter()
             .map(|field| format!("{}.{} (#{})", table, field.name, field.column_id))
@@ -103,7 +107,7 @@ impl std::fmt::Debug for Replace {
             .field("catalog", &self.catalog)
             .field("database", &self.database)
             .field("table", &self.table)
-            .field("table_id", &self.table_id)
+            .field("branch", &self.branch)
             .field("schema", &self.schema)
             .field("on conflict", &self.on_conflict_fields)
             .finish()

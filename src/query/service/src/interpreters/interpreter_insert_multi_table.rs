@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use databend_common_catalog::catalog::CATALOG_DEFAULT;
 use databend_common_catalog::lock::LockTableOption;
+use databend_common_catalog::plan::ExtendedTableInfo;
 use databend_common_exception::ErrorCode;
 use databend_common_exception::Result;
 use databend_common_expression::DataBlock;
@@ -101,7 +102,11 @@ impl Interpreter for InsertMultiTableInterpreter {
             .get_settings()
             .get_enable_compact_after_multi_table_insert()?
         {
-            for (_, (db, tbl)) in &self.plan.target_tables {
+            for (_, (db, tbl, branch)) in &self.plan.target_tables {
+                if branch.is_some() {
+                    // currently, we only support compact for main
+                    continue;
+                }
                 let hook_operator = HookOperator::create(
                     self.ctx.clone(),
                     // multi table insert only support default catalog
@@ -259,14 +264,11 @@ impl InsertMultiTableInterpreter {
 
     async fn build_insert_into_branches(&self) -> Result<InsertIntoBranches> {
         let InsertMultiTable {
-            input_source: _,
             whens,
             opt_else,
-            overwrite: _,
             is_first,
             intos,
-            target_tables: _,
-            meta_data: _,
+            ..
         } = &self.plan;
         let mut branches = InsertIntoBranches::default();
         let mut condition_intos = vec![];
@@ -301,6 +303,7 @@ impl InsertMultiTableInterpreter {
                 .cmp(&b.1.catalog)
                 .then(a.1.database.cmp(&b.1.database))
                 .then(a.1.table.cmp(&b.1.table))
+                .then(a.1.branch.cmp(&b.1.branch))
         });
 
         for (condition, into) in condition_intos {
@@ -308,10 +311,14 @@ impl InsertMultiTableInterpreter {
                 catalog,
                 database,
                 table,
+                branch,
                 casted_schema,
                 source_scalar_exprs,
             } = into;
-            let table = self.ctx.get_table(catalog, database, table).await?;
+            let table = self
+                .ctx
+                .get_table_with_batch(catalog, database, table, branch.as_deref(), None)
+                .await?;
             branches.push(
                 table,
                 condition,
@@ -393,7 +400,10 @@ impl InsertIntoBranches {
             let table_meta_timestamps = ctx.get_table_meta_timestamps(table.as_ref(), snapshot)?;
             serializable_tables.push(SerializableTable {
                 target_catalog_info: catalog_info,
-                target_table_info: table_info.clone(),
+                target_table_info: ExtendedTableInfo {
+                    table_info: table_info.clone(),
+                    branch_info: table.get_branch_info().cloned(),
+                },
                 table_meta_timestamps,
             });
         }
@@ -407,19 +417,22 @@ impl InsertIntoBranches {
         let mut serializable_tables = vec![];
         let mut last_table_id = None;
         for table in &self.tables {
-            let table_info = table.get_table_info();
-            let table_id = table_info.ident.table_id;
-            if last_table_id == Some(table_id) {
+            let tid = table.get_unique_id();
+            if last_table_id == Some(tid) {
                 continue;
             }
-            last_table_id = Some(table_id);
+            last_table_id = Some(tid);
+            let table_info = table.get_table_info();
             let catalog_info = ctx.get_catalog(table_info.catalog()).await?.info();
             let fuse_table = FuseTable::try_from_table(table.as_ref())?;
             let snapshot = fuse_table.read_table_snapshot().await?;
             let table_meta_timestamps = ctx.get_table_meta_timestamps(table.as_ref(), snapshot)?;
             serializable_tables.push(SerializableTable {
                 target_catalog_info: catalog_info,
-                target_table_info: table_info.clone(),
+                target_table_info: ExtendedTableInfo {
+                    table_info: table_info.clone(),
+                    branch_info: fuse_table.get_branch_info().cloned(),
+                },
                 table_meta_timestamps,
             });
         }
@@ -495,10 +508,12 @@ impl InsertIntoBranches {
         for (table, casted_schema) in self.tables.iter().zip(self.casted_schemas.iter()) {
             let target_schema: DataSchemaRef = Arc::new(table.schema().into());
             if target_schema.as_ref() != casted_schema.as_ref() {
-                let table_info = table.get_table_info();
                 fill_and_reorders.push(Some(FillAndReorder {
                     source_schema: casted_schema.clone(),
-                    target_table_info: table_info.clone(),
+                    target_table_info: ExtendedTableInfo {
+                        table_info: table.get_table_info().clone(),
+                        branch_info: table.get_branch_info().cloned(),
+                    },
                 }));
             } else {
                 fill_and_reorders.push(None);
@@ -508,6 +523,9 @@ impl InsertIntoBranches {
     }
 
     fn build_group_ids(&self) -> Vec<u64> {
-        self.tables.iter().map(|table| table.get_id()).collect()
+        self.tables
+            .iter()
+            .map(|table| table.get_unique_id())
+            .collect()
     }
 }

@@ -15,13 +15,13 @@
 use std::any::Any;
 use std::collections::HashMap;
 
+use databend_common_catalog::plan::ExtendedTableInfo;
 use databend_common_catalog::table::Table;
 use databend_common_exception::ErrorCode;
 use databend_common_exception::Result;
 use databend_common_expression::DataSchemaRef;
 use databend_common_expression::RemoteExpr;
 use databend_common_functions::BUILTIN_FUNCTIONS;
-use databend_common_meta_app::schema::TableInfo;
 use databend_common_pipeline_transforms::TransformPipelineHelper;
 use databend_common_pipeline_transforms::blocks::CompoundBlockOperator;
 use databend_common_sql::evaluator::BlockOperator;
@@ -41,7 +41,7 @@ use crate::pipelines::PipelineBuilder;
 pub struct ColumnMutation {
     pub meta: PhysicalPlanMeta,
     pub input: PhysicalPlan,
-    pub table_info: TableInfo,
+    pub table_info: ExtendedTableInfo,
     pub mutation_expr: Option<Vec<(usize, RemoteExpr)>>,
     pub computed_expr: Option<Vec<(usize, RemoteExpr)>>,
     pub mutation_kind: MutationKind,
@@ -186,7 +186,7 @@ impl IPhysicalPlan for ColumnMutation {
 
         let table = builder
             .ctx
-            .build_table_by_table_info(&self.table_info, &None, None)?;
+            .build_table_by_table_info(&self.table_info, None)?;
         let table = FuseTable::try_from_table(table.as_ref())?;
 
         let block_thresholds = table.get_block_thresholds();
