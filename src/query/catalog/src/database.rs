@@ -221,10 +221,7 @@ pub trait Database: DynClone + Sync + Send {
     }
 
     #[async_backtrace::framed]
-    async fn list_table_copied_file_info(
-        &self,
-        _table_id: u64,
-    ) -> Result<ListTableCopiedFileReply> {
+    async fn list_table_copied_file_info(&self, _ref_id: u64) -> Result<ListTableCopiedFileReply> {
         Err(ErrorCode::Unimplemented(format!(
             "UnImplement list_table_copied_file_info in {} Database",
             self.name()

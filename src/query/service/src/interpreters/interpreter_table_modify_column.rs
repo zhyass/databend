@@ -16,6 +16,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use databend_common_catalog::catalog::Catalog;
+use databend_common_catalog::table::ResolvedTableInfo;
 use databend_common_catalog::table::Table;
 use databend_common_catalog::table::TableExt;
 use databend_common_exception::ErrorCode;
@@ -678,7 +679,7 @@ impl ModifyTableColumnInterpreter {
             table_id,
             seq: MatchSeq::Exact(table_version),
             new_table_meta,
-            base_snapshot_location: fuse_table.snapshot_loc(),
+            base_snapshot_locations: fuse_table.base_snapshot_locations(),
         };
 
         let _resp = catalog.update_single_table_meta(req, table_info).await?;
@@ -834,7 +835,7 @@ pub(crate) async fn build_select_insert_plan(
     // 4. build DistributedInsertSelect plan
     let mut insert_plan = PhysicalPlan::new(DistributedInsertSelect {
         input: select_plan,
-        table_info: new_table.get_table_info().clone(),
+        table_info: ResolvedTableInfo::new(new_table.get_table_info()),
         select_schema,
         select_column_bindings,
         insert_schema: Arc::new(new_schema.into()),

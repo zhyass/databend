@@ -605,11 +605,16 @@ impl Catalog for DatabaseCatalog {
         &self,
         tenant: &Tenant,
         db_name: &str,
-        table_id: u64,
+        ref_id: u64,
     ) -> Result<ListTableCopiedFileReply> {
         self.mutable_catalog
-            .list_table_copied_file_info(tenant, db_name, table_id)
+            .list_table_copied_file_info(tenant, db_name, ref_id)
             .await
+    }
+
+    #[async_backtrace::framed]
+    async fn remove_copied_files(&self, id: u64) -> Result<usize> {
+        self.mutable_catalog.remove_copied_files(id).await
     }
 
     #[async_backtrace::framed]

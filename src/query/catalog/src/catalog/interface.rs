@@ -296,6 +296,22 @@ pub trait Catalog: DynClone + Send + Sync + Debug {
         table_name: &str,
     ) -> Result<Arc<dyn Table>>;
 
+    #[async_backtrace::framed]
+    async fn get_table_with_branch(
+        &self,
+        tenant: &Tenant,
+        db_name: &str,
+        table_name: &str,
+        branch_name: Option<&str>,
+    ) -> Result<Arc<dyn Table>> {
+        let table = self.get_table(tenant, db_name, table_name).await?;
+        if let Some(branch) = branch_name {
+            table.with_branch(branch)
+        } else {
+            Ok(table)
+        }
+    }
+
     // Get one table identified as dropped by db and table name.
     async fn get_table_history(
         &self,
@@ -496,12 +512,18 @@ pub trait Catalog: DynClone + Send + Sync + Debug {
         &self,
         _tenant: &Tenant,
         _db_name: &str,
-        _table_id: u64,
+        _ref_id: u64,
     ) -> Result<ListTableCopiedFileReply> {
         Err(ErrorCode::Unimplemented(format!(
             "'list_table_copied_file_info' not implemented for catalog {}",
             self.name()
         )))
+    }
+
+    async fn remove_copied_files(&self, _id: u64) -> Result<usize> {
+        Err(ErrorCode::Unimplemented(
+            "'remove_copied_files' not implemented",
+        ))
     }
 
     async fn truncate_table(

@@ -811,10 +811,15 @@ impl Catalog for MutableCatalog {
         &self,
         tenant: &Tenant,
         db_name: &str,
-        table_id: u64,
+        ref_id: u64,
     ) -> Result<ListTableCopiedFileReply> {
         let db = self.get_database(tenant, db_name).await?;
-        db.list_table_copied_file_info(table_id).await
+        db.list_table_copied_file_info(ref_id).await
+    }
+
+    #[async_backtrace::framed]
+    async fn remove_copied_files(&self, id: u64) -> Result<usize> {
+        Ok(self.ctx.meta.remove_copied_files(id).await?)
     }
 
     #[async_backtrace::framed]

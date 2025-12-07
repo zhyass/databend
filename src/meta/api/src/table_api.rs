@@ -106,7 +106,10 @@ use databend_common_meta_types::TxnRequest;
 use databend_common_meta_types::protobuf as pb;
 use databend_common_meta_types::txn_op::Request;
 use databend_common_meta_types::txn_op_response::Response;
+use display_more::DisplaySliceExt;
 use fastrace::func_name;
+use futures::StreamExt;
+use futures::TryStreamExt;
 use log::debug;
 use log::error;
 use log::info;
@@ -947,7 +950,7 @@ where
             trials.next().unwrap()?.await;
 
             let copied_file_ident = TableCopiedFileNameIdent {
-                table_id: table_id.table_id,
+                ref_id: table_id.table_id,
                 file: "dummy".to_string(),
             };
             let dir_name = DirName::new(copied_file_ident);
@@ -1259,23 +1262,20 @@ where
         // in each function. In this case there is chance that some `TableCopiedFileInfo` may not be
         // removed in `remove_table_copied_files`, but these data can be purged in case of expire time.
 
-        let insert_if_not_exists_table_ids = copied_files
-            .iter()
-            .filter(|(_, req)| req.insert_if_not_exists)
-            .map(|(table_id, _)| *table_id)
-            .collect::<Vec<_>>();
+        let mut insert_if_not_exists_table_ids = Vec::with_capacity(copied_files.len());
+        for (ident, req) in copied_files {
+            let tbid = TableId {
+                table_id: ident.table_id,
+            };
+            txn.condition
+                .push(txn_cond_eq_seq(&tbid, tbl_seqs[&tbid.table_id]));
 
-        for (table_id, req) in copied_files {
-            let tbid = TableId { table_id };
-
-            let table_meta_seq = tbl_seqs[&tbid.table_id];
-            txn.condition.push(txn_cond_eq_seq(&tbid, table_meta_seq));
-
-            for (file_name, file_info) in req.file_info {
-                let key = TableCopiedFileNameIdent {
-                    table_id: tbid.table_id,
-                    file: file_name,
-                };
+            let ref_id = ident.ref_id();
+            if req.insert_if_not_exists {
+                insert_if_not_exists_table_ids.push(ref_id);
+            }
+            for (file, file_info) in req.file_info {
+                let key = TableCopiedFileNameIdent { ref_id, file };
 
                 if req.insert_if_not_exists {
                     txn.condition.push(txn_cond_eq_seq(&key, 0));
@@ -1678,7 +1678,7 @@ where
     ) -> Result<GetTableCopiedFileReply, KVAppError> {
         debug!(req :? =(&req); "SchemaApi: {}", func_name!());
 
-        let table_id = req.table_id;
+        let table_id = req.ref_ident.table_id;
         let tbid = TableId { table_id };
 
         let seq_meta = self.get_pb(&tbid).await?;
@@ -1699,9 +1699,10 @@ where
 
         let mut keys = Vec::with_capacity(req.files.len());
 
+        let ref_id = req.ref_ident.ref_id();
         for file in req.files.iter() {
             let ident = TableCopiedFileNameIdent {
-                table_id,
+                ref_id,
                 file: file.clone(),
             };
             keys.push(ident.to_string_key());
@@ -1728,10 +1729,11 @@ where
 
     async fn list_table_copied_file_info(
         &self,
-        table_id: u64,
+        ref_id: u64,
     ) -> Result<ListTableCopiedFileReply, MetaError> {
+        // List all copied files under this table (including main table and all branches)
         let key = TableCopiedFileNameIdent {
-            table_id,
+            ref_id,
             file: "".to_string(),
         };
 
@@ -1742,6 +1744,51 @@ where
         }
 
         Ok(ListTableCopiedFileReply { file_info })
+    }
+
+    #[logcall::logcall]
+    #[fastrace::trace]
+    async fn remove_copied_files(&self, ref_id: u64) -> Result<usize, MetaError> {
+        let batch_size = 1024;
+
+        let mut num_removed_copied_files = 0;
+        // Loop until all cleaned.
+        for i in 0..usize::MAX {
+            let mut txn = TxnRequest::default();
+
+            let copied_file_ident = TableCopiedFileNameIdent {
+                ref_id,
+                file: "dummy".to_string(),
+            };
+
+            let dir_name = DirName::new(copied_file_ident);
+
+            let key_stream = self.list_pb_keys(&dir_name).await?;
+            let copied_files = key_stream.take(batch_size).try_collect::<Vec<_>>().await?;
+
+            if copied_files.is_empty() {
+                return Ok(num_removed_copied_files);
+            }
+
+            for copied_ident in copied_files.iter() {
+                txn.if_then.push(txn_op_del(copied_ident));
+            }
+
+            info!(
+                "remove_copied_files {}: {}-th batch remove: {} items: {}",
+                ref_id,
+                i,
+                copied_files.len(),
+                copied_files.display()
+            );
+
+            num_removed_copied_files += copied_files.len();
+
+            // Txn failures are ignored for simplicity, since copied files kv pairs are put with ttl,
+            // they will not be leaked permanently, will be cleaned eventually.
+            send_txn(self, txn).await?;
+        }
+        unreachable!()
     }
 
     #[logcall::logcall]

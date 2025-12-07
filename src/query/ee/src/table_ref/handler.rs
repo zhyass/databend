@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -112,13 +113,11 @@ impl TableRefHandler for RealTableRefHandler {
             )?
         };
         // write down new snapshot
-        let new_snapshot_location = fuse_table
-            .meta_location_generator()
-            .ref_snapshot_location_from_uuid(
-                seq,
-                &new_snapshot.snapshot_id,
-                new_snapshot.format_version,
-            )?;
+        let new_snapshot_location = fuse_table.meta_location_generator().gen_snapshot_location(
+            Some(seq),
+            &new_snapshot.snapshot_id,
+            new_snapshot.format_version,
+        )?;
         let data = new_snapshot.to_bytes()?;
         fuse_table
             .get_operator_ref()
@@ -139,7 +138,7 @@ impl TableRefHandler for RealTableRefHandler {
             table_id: table_info.ident.table_id,
             seq: MatchSeq::Exact(seq),
             new_table_meta,
-            base_snapshot_location: fuse_table.snapshot_loc(),
+            base_snapshot_locations: HashMap::new(),
         };
         catalog.update_single_table_meta(req, table_info).await?;
         Ok(())
@@ -184,7 +183,7 @@ impl TableRefHandler for RealTableRefHandler {
             table_id: table_info.ident.table_id,
             seq: MatchSeq::Exact(table_info.ident.seq),
             new_table_meta,
-            base_snapshot_location: fuse_table.snapshot_loc(),
+            base_snapshot_locations: HashMap::new(),
         };
         catalog.update_single_table_meta(req, table_info).await?;
 
@@ -199,6 +198,7 @@ impl TableRefHandler for RealTableRefHandler {
         operator.remove_all(&dir).await.inspect_err(|err| {
             error!("failed to remove all in directory {}: {}", dir, err);
         })?;
+
         Ok(())
     }
 }

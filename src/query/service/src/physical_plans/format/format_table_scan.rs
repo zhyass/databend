@@ -57,7 +57,7 @@ impl<'a> PhysicalFormat for TableScanFormatter<'a> {
             ),
             Some(table_index) => {
                 let table = ctx.metadata.table(table_index).clone();
-                format!("{}.{}.{}", table.catalog(), table.database(), table.name())
+                table.qualified_name()
             }
         };
         let filters = self

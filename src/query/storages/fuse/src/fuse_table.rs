@@ -60,8 +60,9 @@ use databend_common_io::constants::DEFAULT_BLOCK_BUFFER_SIZE;
 use databend_common_io::constants::DEFAULT_BLOCK_COMPRESSED_SIZE;
 use databend_common_io::constants::DEFAULT_BLOCK_PER_SEGMENT;
 use databend_common_io::constants::DEFAULT_BLOCK_ROW_COUNT;
+use databend_common_meta_app::schema::BranchInfo;
 use databend_common_meta_app::schema::DatabaseType;
-use databend_common_meta_app::schema::SnapshotRef;
+use databend_common_meta_app::schema::SnapshotRefType;
 use databend_common_meta_app::schema::TableIdent;
 use databend_common_meta_app::schema::TableInfo;
 use databend_common_meta_app::schema::TableMeta;
@@ -158,7 +159,7 @@ pub struct FuseTable {
 
     // If this is set, reading from fuse_table should only return the increment blocks
     pub(crate) changes_desc: Option<ChangesDesc>,
-    pub(crate) table_branch: Option<SnapshotRef>,
+    pub(crate) table_branch: Option<BranchInfo>,
 
     pub pruned_result_receiver: Arc<Mutex<PartInfoReceiver>>,
 }
@@ -439,8 +440,8 @@ impl FuseTable {
     }
 
     pub fn snapshot_loc(&self) -> Option<String> {
-        if let Some(snapshot_ref) = self.table_branch.as_ref() {
-            return Some(snapshot_ref.loc.clone());
+        if let Some(branch) = self.table_branch.as_ref() {
+            return Some(branch.info.loc.clone());
         }
 
         let options = self.table_info.options();
@@ -449,6 +450,13 @@ impl FuseTable {
             // for backward compatibility, we check the legacy table option
             .or_else(|| options.get(OPT_KEY_LEGACY_SNAPSHOT_LOC))
             .cloned()
+    }
+
+    pub fn base_snapshot_locations(&self) -> HashMap<u64, Option<String>> {
+        let mut locations = HashMap::new();
+        let branch_id = self.get_branch_id().unwrap_or(0);
+        locations.insert(branch_id, self.snapshot_loc());
+        locations
     }
 
     pub fn get_operator(&self) -> Operator {
@@ -460,7 +468,11 @@ impl FuseTable {
     }
 
     pub fn get_branch_id(&self) -> Option<u64> {
-        self.table_branch.as_ref().map(|v| v.id)
+        self.table_branch.as_ref().map(|v| v.branch_id())
+    }
+
+    pub fn get_branch_name(&self) -> Option<&str> {
+        self.table_branch.as_ref().map(|v| v.branch_name())
     }
 
     pub fn try_from_table(tbl: &dyn Table) -> Result<&FuseTable> {
@@ -831,6 +843,10 @@ impl Table for FuseTable {
 
     fn get_table_info(&self) -> &TableInfo {
         &self.table_info
+    }
+
+    fn get_table_branch(&self) -> Option<&BranchInfo> {
+        self.table_branch.as_ref()
     }
 
     fn get_data_metrics(&self) -> Option<Arc<StorageMetrics>> {
@@ -1216,7 +1232,10 @@ impl Table for FuseTable {
     fn with_branch(&self, branch_name: &str) -> Result<Arc<dyn Table>> {
         let snapshot_ref = self.table_info.get_table_ref(None, branch_name)?;
         let mut new_table = self.clone();
-        new_table.table_branch = Some(snapshot_ref.clone());
+        new_table.table_branch = Some(BranchInfo {
+            name: branch_name.to_string(),
+            info: snapshot_ref.clone(),
+        });
         Ok(Arc::new(new_table))
     }
 
@@ -1335,7 +1354,10 @@ impl Table for FuseTable {
     }
 
     fn is_read_only(&self) -> bool {
-        self.table_type.is_readonly()
+        self.table_branch
+            .as_ref()
+            .is_some_and(|v| v.branch_type() == SnapshotRefType::Tag)
+            || self.table_type.is_readonly()
     }
 
     fn use_own_sample_block(&self) -> bool {

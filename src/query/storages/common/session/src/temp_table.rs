@@ -316,10 +316,10 @@ impl TempTblMgr {
         &self,
         req: GetTableCopiedFileReq,
     ) -> Result<GetTableCopiedFileReply> {
-        let Some(table) = self.id_to_table.get(&req.table_id) else {
+        let Some(table) = self.id_to_table.get(&req.ref_ident.table_id) else {
             return Err(ErrorCode::UnknownTable(format!(
                 "Temporary table id {} not found",
-                req.table_id
+                req.ref_ident.table_id
             )));
         };
         let mut file_info = BTreeMap::new();

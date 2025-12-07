@@ -15,9 +15,9 @@
 use std::any::Any;
 
 use databend_common_catalog::plan::DataSourcePlan;
+use databend_common_catalog::table::ResolvedTableInfo;
 use databend_common_exception::Result;
 use databend_common_expression::DataSchemaRef;
-use databend_common_meta_app::schema::TableInfo;
 use databend_common_pipeline_transforms::TransformPipelineHelper;
 use databend_common_pipeline_transforms::blocks::TransformCastSchema;
 use databend_common_sql::ColumnBinding;
@@ -32,7 +32,7 @@ use crate::pipelines::PipelineBuilder;
 pub struct DistributedInsertSelect {
     pub meta: PhysicalPlanMeta,
     pub input: PhysicalPlan,
-    pub table_info: TableInfo,
+    pub table_info: ResolvedTableInfo,
     pub insert_schema: DataSchemaRef,
     pub select_schema: DataSchemaRef,
     pub select_column_bindings: Vec<ColumnBinding>,

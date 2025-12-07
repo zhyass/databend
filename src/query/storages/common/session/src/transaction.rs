@@ -15,6 +15,7 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::collections::hash_map::Entry;
 use std::sync::Arc;
 
 use chrono::DateTime;
@@ -23,6 +24,7 @@ use databend_common_meta_app::principal::StageInfo;
 use databend_common_meta_app::schema::TableCopiedFileInfo;
 use databend_common_meta_app::schema::TableIdent;
 use databend_common_meta_app::schema::TableInfo;
+use databend_common_meta_app::schema::TableRefIdent;
 use databend_common_meta_app::schema::UpdateMultiTableMetaReq;
 use databend_common_meta_app::schema::UpdateStreamMetaReq;
 use databend_common_meta_app::schema::UpdateTableMetaReq;
@@ -66,8 +68,8 @@ pub enum TxnState {
 pub struct TxnBuffer {
     table_desc_to_id: HashMap<String, u64>,
     mutated_tables: HashMap<u64, TableInfo>,
-    base_snapshot_location: HashMap<u64, Option<String>>,
-    copied_files: HashMap<u64, Vec<UpsertTableCopiedFileReq>>,
+    base_snapshot_locations: HashMap<u64, HashMap<u64, Option<String>>>,
+    copied_files: HashMap<TableRefIdent, Vec<UpsertTableCopiedFileReq>>,
     update_stream_meta: HashMap<u64, UpdateStreamMetaReq>,
     deduplicated_labels: HashSet<String>,
     stream_tables: HashMap<u64, StreamSnapshot>,
@@ -103,13 +105,21 @@ impl TxnBuffer {
                 ..table_info.clone()
             });
 
-            self.base_snapshot_location
-                .entry(table_id)
-                .or_insert(req.base_snapshot_location);
+            match self.base_snapshot_locations.entry(table_id) {
+                Entry::Vacant(e) => {
+                    e.insert(req.base_snapshot_locations);
+                }
+                Entry::Occupied(mut e) => {
+                    let locations = e.get_mut();
+                    for (branch_id, loc) in req.base_snapshot_locations {
+                        locations.entry(branch_id).or_insert(loc);
+                    }
+                }
+            }
         }
 
-        for (table_id, file) in std::mem::take(&mut req.copied_files) {
-            self.copied_files.entry(table_id).or_default().push(file);
+        for (ref_ident, file) in std::mem::take(&mut req.copied_files) {
+            self.copied_files.entry(ref_ident).or_default().push(file);
         }
 
         self.update_stream_metas(&req.update_stream_metas);
@@ -299,7 +309,7 @@ impl TxnManager {
         let mut copied_files = Vec::new();
         for (tbl_id, v) in &self.txn_buffer.copied_files {
             for file in v {
-                copied_files.push((*tbl_id, file.clone()));
+                copied_files.push((tbl_id.clone(), file.clone()));
             }
         }
         UpdateMultiTableMetaReq {
@@ -313,7 +323,7 @@ impl TxnManager {
                             table_id: *id,
                             seq: MatchSeq::Exact(info.ident.seq),
                             new_table_meta: info.meta.clone(),
-                            base_snapshot_location: None,
+                            base_snapshot_locations: HashMap::new(),
                         },
                         info.clone(),
                     )
@@ -352,19 +362,19 @@ impl TxnManager {
 
     pub fn get_table_copied_file_info(
         &self,
-        table_id: u64,
+        ref_ident: &TableRefIdent,
     ) -> BTreeMap<String, TableCopiedFileInfo> {
         let mut ret = BTreeMap::new();
         if !self.is_active() {
             return ret;
         }
-        if is_temp_table_id(table_id) {
-            let temp_table = self.txn_buffer.mutated_temp_tables.get(&table_id);
+        if is_temp_table_id(ref_ident.table_id) {
+            let temp_table = self.txn_buffer.mutated_temp_tables.get(&ref_ident.table_id);
             if let Some(temp_table) = temp_table {
                 ret.extend(temp_table.copied_files.clone());
             }
         } else {
-            let reqs = self.txn_buffer.copied_files.get(&table_id);
+            let reqs = self.txn_buffer.copied_files.get(ref_ident);
             if let Some(reqs) = reqs {
                 for req in reqs {
                     ret.extend(req.file_info.clone().into_iter());
@@ -405,9 +415,9 @@ impl TxnManager {
             .insert(table_id, timestamps);
     }
 
-    pub fn get_base_snapshot_location(&self, table_id: u64) -> Option<String> {
+    pub fn get_base_snapshot_locations(&self, table_id: u64) -> HashMap<u64, Option<String>> {
         self.txn_buffer
-            .base_snapshot_location
+            .base_snapshot_locations
             .get(&table_id)
             .unwrap()
             .clone()

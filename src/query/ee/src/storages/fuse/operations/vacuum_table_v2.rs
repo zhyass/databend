@@ -502,9 +502,11 @@ async fn select_gc_root(
             info!("anchor has no prev_snapshot_id, stop vacuuming");
             return Ok(None);
         };
-        let gc_root_path = fuse_table
-            .meta_location_generator()
-            .snapshot_location_from_uuid(&gc_root_id, gc_root_ver)?;
+        let gc_root_path = fuse_table.meta_location_generator().gen_snapshot_location(
+            None,
+            &gc_root_id,
+            gc_root_ver,
+        )?;
         if !is_uuid_v7(&gc_root_id) {
             info!("gc_root {} is not v7", gc_root_path);
             return Ok(None);
@@ -768,9 +770,11 @@ async fn process_branch_gc_root(
     let Some((gc_root_id, gc_root_ver)) = last_snapshot.prev_snapshot_id else {
         return Ok(None);
     };
-    let gc_root_path = fuse_table
-        .meta_location_generator()
-        .ref_snapshot_location_from_uuid(branch_id, &gc_root_id, gc_root_ver)?;
+    let gc_root_path = fuse_table.meta_location_generator().gen_snapshot_location(
+        Some(branch_id),
+        &gc_root_id,
+        gc_root_ver,
+    )?;
 
     // Try to read gc_root snapshot
     match SnapshotsIO::read_snapshot(gc_root_path.clone(), op, false).await {

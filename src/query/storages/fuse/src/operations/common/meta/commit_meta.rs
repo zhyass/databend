@@ -29,6 +29,7 @@ use crate::operations::common::SnapshotChanges;
 pub struct CommitMeta {
     pub conflict_resolve_context: ConflictResolveContext,
     pub new_segment_locs: Vec<Location>,
+    // The table id (or branch id) that this commit meta belongs to.
     pub table_id: u64,
     pub virtual_schema: Option<VirtualDataSchema>,
     pub hll: BlockHLL,

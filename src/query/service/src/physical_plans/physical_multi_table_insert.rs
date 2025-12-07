@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use databend_common_catalog::catalog::CatalogManager;
+use databend_common_catalog::table::ResolvedTableInfo;
 use databend_common_catalog::table_context::TableContext;
 use databend_common_exception::ErrorCode;
 use databend_common_exception::Result;
@@ -26,7 +27,6 @@ use databend_common_expression::LimitType;
 use databend_common_expression::RemoteExpr;
 use databend_common_expression::SortColumnDescription;
 use databend_common_meta_app::schema::CatalogInfo;
-use databend_common_meta_app::schema::TableInfo;
 use databend_common_meta_app::schema::UpdateStreamMetaReq;
 use databend_common_pipeline::core::DynTransformBuilder;
 use databend_common_pipeline::core::ProcessorPtr;
@@ -468,7 +468,7 @@ impl IPhysicalPlan for ChunkFillAndReorder {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct FillAndReorder {
     pub source_schema: DataSchemaRef,
-    pub target_table_info: TableInfo,
+    pub target_table_info: ResolvedTableInfo,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -626,7 +626,7 @@ impl IPhysicalPlan for ChunkAppendData {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SerializableTable {
     pub target_catalog_info: Arc<CatalogInfo>,
-    pub target_table_info: TableInfo,
+    pub target_table_info: ResolvedTableInfo,
     pub table_meta_timestamps: TableMetaTimestamps,
 }
 
@@ -753,7 +753,6 @@ impl IPhysicalPlan for ChunkCommitInsert {
         let mut mutation_aggregator_builders: Vec<DynTransformBuilder> =
             Vec::with_capacity(self.targets.len());
         let mut tables = HashMap::new();
-
         for target in &self.targets {
             let table = builder
                 .ctx
@@ -772,8 +771,9 @@ impl IPhysicalPlan for ChunkCommitInsert {
                     target.table_meta_timestamps,
                 )?,
             ));
-            table_meta_timestampss.insert(table.get_id(), target.table_meta_timestamps);
-            tables.insert(table.get_id(), table);
+            let tid = table.table_or_branch_id();
+            table_meta_timestampss.insert(tid, target.table_meta_timestamps);
+            tables.insert(tid, table);
         }
 
         builder

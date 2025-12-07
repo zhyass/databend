@@ -19,6 +19,7 @@ use databend_common_base::base::tokio;
 use databend_common_catalog::plan::PartInfoType;
 use databend_common_catalog::plan::Partitions;
 use databend_common_catalog::table::CompactionLimits;
+use databend_common_catalog::table::ResolvedTableInfo;
 use databend_common_catalog::table::Table;
 use databend_common_exception::Result;
 use databend_common_expression::BlockThresholds;
@@ -120,7 +121,7 @@ async fn do_compact(ctx: Arc<QueryContext>, table: Arc<dyn Table>) -> Result<boo
         .compact_blocks(ctx.clone(), CompactionLimits::default())
         .await?;
 
-    let table_info = table.get_table_info().clone();
+    let table_info = ResolvedTableInfo::new(table.get_table_info());
     if let Some((parts, snapshot)) = res {
         let table_meta_timestamps =
             ctx.get_table_meta_timestamps(table.as_ref(), Some(snapshot.clone()))?;

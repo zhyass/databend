@@ -218,7 +218,7 @@ impl TableMutationAggregator {
             kind,
             finished_tasks: 0,
             start_time: Instant::now(),
-            table_id: table.get_id(),
+            table_id: table.table_or_branch_id(),
             table_meta_timestamps,
         }
     }

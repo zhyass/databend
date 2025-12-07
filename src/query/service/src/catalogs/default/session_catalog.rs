@@ -573,19 +573,21 @@ impl Catalog for SessionCatalog {
         db_name: &str,
         req: GetTableCopiedFileReq,
     ) -> Result<GetTableCopiedFileReply> {
-        let table_id = req.table_id;
+        let table_id = req.ref_ident.table_id;
         let mut reply = if is_temp_table_id(table_id) {
             self.temp_tbl_mgr
                 .lock()
                 .get_table_copied_file_info(req.clone())?
         } else {
             self.inner
-                .get_table_copied_file_info(tenant, db_name, req)
+                .get_table_copied_file_info(tenant, db_name, req.clone())
                 .await?
         };
-        reply
-            .file_info
-            .extend(self.txn_mgr.lock().get_table_copied_file_info(table_id));
+        reply.file_info.extend(
+            self.txn_mgr
+                .lock()
+                .get_table_copied_file_info(&req.ref_ident),
+        );
         Ok(reply)
     }
 
@@ -593,18 +595,25 @@ impl Catalog for SessionCatalog {
         &self,
         tenant: &Tenant,
         db_name: &str,
-        table_id: u64,
+        ref_id: u64,
     ) -> Result<ListTableCopiedFileReply> {
-        let reply = if is_temp_table_id(table_id) {
+        let reply = if is_temp_table_id(ref_id) {
             self.temp_tbl_mgr
                 .lock()
-                .list_table_copied_file_info(table_id)?
+                .list_table_copied_file_info(ref_id)?
         } else {
             self.inner
-                .list_table_copied_file_info(tenant, db_name, table_id)
+                .list_table_copied_file_info(tenant, db_name, ref_id)
                 .await?
         };
         Ok(reply)
+    }
+
+    async fn remove_copied_files(&self, id: u64) -> Result<usize> {
+        if is_temp_table_id(id) {
+            return Ok(0);
+        }
+        self.inner.remove_copied_files(id).await
     }
 
     async fn truncate_table(

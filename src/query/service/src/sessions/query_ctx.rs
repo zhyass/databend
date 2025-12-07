@@ -69,6 +69,7 @@ use databend_common_catalog::runtime_filter_info::RuntimeFilterReport;
 use databend_common_catalog::runtime_filter_info::RuntimeFilterStatsSnapshot;
 use databend_common_catalog::session_type::SessionType;
 use databend_common_catalog::statistics::data_cache_statistics::DataCacheMetrics;
+use databend_common_catalog::table::ResolvedTableInfo;
 use databend_common_catalog::table_args::TableArgs;
 use databend_common_catalog::table_context::ContextError;
 use databend_common_catalog::table_context::FilteredCopyFiles;
@@ -101,7 +102,7 @@ use databend_common_meta_app::principal::UserPrivilegeType;
 use databend_common_meta_app::schema::CatalogType;
 use databend_common_meta_app::schema::DropTableByIdReq;
 use databend_common_meta_app::schema::GetTableCopiedFileReq;
-use databend_common_meta_app::schema::TableInfo;
+use databend_common_meta_app::schema::TableRefIdent;
 use databend_common_meta_app::storage::StorageParams;
 use databend_common_meta_app::tenant::Tenant;
 use databend_common_metrics::storage::*;
@@ -215,16 +216,19 @@ impl QueryContext {
     /// Build fuse/system normal table by table info.
     pub fn build_table_by_table_info(
         &self,
-        table_info: &TableInfo,
+        table_info: &ResolvedTableInfo,
         table_args: Option<TableArgs>,
     ) -> Result<Arc<dyn Table>> {
+        let branch = table_info.branch.as_deref();
+        let table_info = &table_info.inner;
+
         let catalog = self
             .shared
             .catalog_manager
             .build_catalog(table_info.catalog_info.clone(), self.session_state()?)?;
 
         let is_default = catalog.info().catalog_type() == CatalogType::Default;
-        match (table_args, is_default) {
+        let tbl = match (table_args, is_default) {
             (Some(table_args), true) => {
                 let default_catalog = self
                     .shared
@@ -272,7 +276,9 @@ impl QueryContext {
                 }
             }
             (None, false) => catalog.get_table_by_info(table_info),
-        }
+        }?;
+
+        table_with_opt_branch(tbl, branch)
     }
 
     // Build external table by stage info, this is used in:
@@ -534,12 +540,7 @@ impl QueryContext {
             _ => table,
         };
 
-        let table = if let Some(branch) = branch {
-            table.with_branch(branch)?
-        } else {
-            table
-        };
-        Ok(table)
+        table_with_opt_branch(table, branch)
     }
 
     pub fn mark_unload_callbacked(&self) -> bool {
@@ -1506,6 +1507,7 @@ impl TableContext for QueryContext {
         catalog_name: &str,
         database_name: &str,
         table_name: &str,
+        branch_name: Option<&str>,
         files: &[StageFileInfo],
         path_prefix: Option<String>,
         max_files: Option<usize>,
@@ -1522,9 +1524,12 @@ impl TableContext for QueryContext {
         let tenant = self.get_tenant();
         let catalog = self.get_catalog(catalog_name).await?;
         let table = catalog
-            .get_table(&tenant, database_name, table_name)
+            .get_table_with_branch(&tenant, database_name, table_name, branch_name)
             .await?;
-        let table_id = table.get_id();
+        let ref_ident = TableRefIdent {
+            table_id: table.get_id(),
+            branch_id: table.get_table_branch().map(|b| b.branch_id()),
+        };
 
         let mut result_size: usize = 0;
         let max_files = max_files.unwrap_or(usize::MAX);
@@ -1545,7 +1550,7 @@ impl TableContext for QueryContext {
                 })
                 .collect::<Vec<_>>();
             let req = GetTableCopiedFileReq {
-                table_id,
+                ref_ident: ref_ident.clone(),
                 files: files.clone(),
             };
             let start_request = Instant::now();
@@ -2127,6 +2132,7 @@ impl TableContext for QueryContext {
         catalog_name: &str,
         db_name: &str,
         tbl_name: &str,
+        branch_name: Option<&str>,
         lock_opt: &LockTableOption,
     ) -> Result<Option<Arc<LockGuard>>> {
         let enabled_table_lock = self.get_settings().get_enable_table_lock().unwrap_or(false);
@@ -2136,14 +2142,17 @@ impl TableContext for QueryContext {
 
         let catalog = self.get_catalog(catalog_name).await?;
         let tbl = catalog
-            .get_table(&self.get_tenant(), db_name, tbl_name)
+            .get_table_with_branch(&self.get_tenant(), db_name, tbl_name, branch_name)
             .await?;
         if tbl.engine() != "FUSE" || tbl.is_read_only() || tbl.is_temp() {
             return Ok(None);
         }
 
         // Add table lock.
-        let table_lock = LockManager::create_table_lock(tbl.get_table_info().clone())?;
+        let table_lock = LockManager::create_table_lock(
+            tbl.get_table_info().catalog(),
+            tbl.table_or_branch_id(),
+        )?;
         let lock_guard = match lock_opt {
             LockTableOption::LockNoRetry => table_lock.try_lock(self.clone(), false).await?,
             LockTableOption::LockWithRetry => table_lock.try_lock(self.clone(), true).await?,
@@ -2322,4 +2331,12 @@ pub fn convert_query_log_timestamp(time: SystemTime) -> i64 {
     time.duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::new(0, 0))
         .as_micros() as i64
+}
+
+fn table_with_opt_branch(tbl: Arc<dyn Table>, branch_name: Option<&str>) -> Result<Arc<dyn Table>> {
+    if let Some(branch) = branch_name {
+        tbl.with_branch(branch)
+    } else {
+        Ok(tbl)
+    }
 }

@@ -15,6 +15,7 @@
 // Logs from this module will show up as "[VACUUM] ...".
 databend_common_tracing::register_module_tag!("[VACUUM]");
 
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -458,7 +459,7 @@ impl FuseTable {
                 table_id: latest_table_info.ident.table_id,
                 seq: MatchSeq::Exact(latest_table_info.ident.seq),
                 new_table_meta,
-                base_snapshot_location: self.snapshot_loc(),
+                base_snapshot_locations: HashMap::new(),
             };
             match catalog
                 .update_single_table_meta(req, latest_table_info)

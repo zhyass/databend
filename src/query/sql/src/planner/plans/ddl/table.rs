@@ -455,6 +455,7 @@ pub struct TruncateTablePlan {
     pub database: String,
     /// The table name
     pub table: String,
+    pub branch: Option<String>,
 }
 
 impl TruncateTablePlan {

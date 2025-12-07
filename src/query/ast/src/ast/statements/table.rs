@@ -25,6 +25,7 @@ use crate::ast::Expr;
 use crate::ast::Identifier;
 use crate::ast::Query;
 use crate::ast::TableIndexType;
+use crate::ast::TableRef;
 use crate::ast::TableReference;
 use crate::ast::TimeTravelPoint;
 use crate::ast::TypeName;
@@ -703,22 +704,12 @@ impl Display for RenameTableStmt {
 
 #[derive(Debug, Clone, PartialEq, Drive, DriveMut)]
 pub struct TruncateTableStmt {
-    pub catalog: Option<Identifier>,
-    pub database: Option<Identifier>,
-    pub table: Identifier,
+    pub table: TableRef,
 }
 
 impl Display for TruncateTableStmt {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "TRUNCATE TABLE ")?;
-        write_dot_separated_list(
-            f,
-            self.catalog
-                .iter()
-                .chain(&self.database)
-                .chain(Some(&self.table)),
-        )?;
-        Ok(())
+        write!(f, "TRUNCATE TABLE {}", self.table)
     }
 }
 
@@ -798,23 +789,14 @@ impl Display for crate::ast::VacuumTemporaryFiles {
 
 #[derive(Debug, Clone, PartialEq, Drive, DriveMut)]
 pub struct OptimizeTableStmt {
-    pub catalog: Option<Identifier>,
-    pub database: Option<Identifier>,
-    pub table: Identifier,
+    pub table: TableRef,
     pub action: OptimizeTableAction,
     pub limit: Option<u64>,
 }
 
 impl Display for OptimizeTableStmt {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "OPTIMIZE TABLE ")?;
-        write_dot_separated_list(
-            f,
-            self.catalog
-                .iter()
-                .chain(&self.database)
-                .chain(Some(&self.table)),
-        )?;
+        write!(f, "OPTIMIZE TABLE {}", self.table)?;
         write!(f, " {}", &self.action)?;
         if let Some(limit) = self.limit {
             write!(f, " LIMIT {limit}")?;

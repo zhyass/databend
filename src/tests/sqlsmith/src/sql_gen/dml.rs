@@ -35,6 +35,7 @@ use databend_common_ast::ast::MutationSource;
 use databend_common_ast::ast::MutationUpdateExpr;
 use databend_common_ast::ast::ReplaceStmt;
 use databend_common_ast::ast::Statement;
+use databend_common_ast::ast::TableRef;
 use databend_common_ast::ast::TableReference;
 use databend_common_ast::ast::UnmatchedClause;
 use databend_common_ast::ast::UpdateStmt;
@@ -83,9 +84,13 @@ impl<'a, R: Rng + 'a> SqlGenerator<'a, R> {
                 // TODO
                 hints: None,
                 with: None,
-                catalog: None,
-                database: table.db_name.clone(),
-                table: table.name.clone(),
+                table: TableRef {
+                    catalog: None,
+                    database: table.db_name.clone(),
+                    table: table.name.clone(),
+                    // TODO
+                    branch: None,
+                },
                 // TODO
                 columns: vec![],
                 source,
@@ -133,11 +138,15 @@ impl<'a, R: Rng + 'a> SqlGenerator<'a, R> {
 
         DeleteStmt {
             hints,
-            catalog: None,
-            database: table
-                .db_name
-                .map(|name| Identifier::from_name(None, name.name)),
-            table: Identifier::from_name(None, table.name.name.clone()),
+            table: TableRef {
+                catalog: None,
+                database: table
+                    .db_name
+                    .map(|name| Identifier::from_name(None, name.name)),
+                table: Identifier::from_name(None, table.name.name.clone()),
+                // TODO
+                branch: None,
+            },
             table_alias: None,
             selection,
             with: None,
@@ -164,11 +173,15 @@ impl<'a, R: Rng + 'a> SqlGenerator<'a, R> {
         }
         UpdateStmt {
             hints,
-            catalog: None,
-            database: table
-                .db_name
-                .map(|name| Identifier::from_name(None, name.name)),
-            table: Identifier::from_name(None, table.name.name.clone()),
+            table: TableRef {
+                catalog: None,
+                database: table
+                    .db_name
+                    .map(|name| Identifier::from_name(None, name.name)),
+                table: Identifier::from_name(None, table.name.name.clone()),
+                // TODO
+                branch: None,
+            },
             table_alias: None,
             update_list,
             from: None,
@@ -197,9 +210,13 @@ impl<'a, R: Rng + 'a> SqlGenerator<'a, R> {
 
         ReplaceStmt {
             hints,
-            catalog: None,
-            database: table.db_name.clone(),
-            table: table.name.clone(),
+            table: TableRef {
+                catalog: None,
+                database: table.db_name,
+                table: table.name,
+                // TODO
+                branch: None,
+            },
             is_conflict: true,
             on_conflict_columns,
             columns,
@@ -307,9 +324,13 @@ impl<'a, R: Rng + 'a> SqlGenerator<'a, R> {
 
         MergeIntoStmt {
             hints,
-            catalog: None,
-            database: table.db_name.clone(),
-            table_ident: table.name.clone(),
+            table: TableRef {
+                catalog: None,
+                database: table.db_name,
+                table: table.name,
+                // TODO
+                branch: None,
+            },
             source,
             target_alias: None,
             join_expr,
@@ -342,10 +363,12 @@ impl<'a, R: Rng + 'a> SqlGenerator<'a, R> {
 
         let table_reference = TableReference::Table {
             span: Span::default(),
-            catalog: None,
-            database: table.db_name.clone(),
-            table: table.name.clone(),
-            ref_name: None,
+            table: TableRef {
+                catalog: None,
+                database: table.db_name.clone(),
+                table: table.name.clone(),
+                branch: None,
+            },
             alias: None,
             temporal: None,
             with_options: None,
@@ -534,9 +557,12 @@ impl<'a, R: Rng + 'a> SqlGenerator<'a, R> {
                 // TODO
                 hints: None,
                 with: None,
-                catalog: None,
-                database: table.db_name.clone(),
-                table: table.name.clone(),
+                table: TableRef {
+                    catalog: None,
+                    database: table.db_name.clone(),
+                    table: table.name.clone(),
+                    branch: None,
+                },
                 columns,
                 source,
                 overwrite: false,
@@ -547,10 +573,12 @@ impl<'a, R: Rng + 'a> SqlGenerator<'a, R> {
 
         let table_reference = TableReference::Table {
             span: Span::default(),
-            catalog: None,
-            database: table.db_name.clone(),
-            table: table.name.clone(),
-            ref_name: None,
+            table: TableRef {
+                catalog: None,
+                database: table.db_name.clone(),
+                table: table.name.clone(),
+                branch: None,
+            },
             alias: None,
             temporal: None,
             with_options: None,

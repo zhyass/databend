@@ -15,13 +15,13 @@
 use std::any::Any;
 
 use databend_common_catalog::plan::StageTableInfo;
+use databend_common_catalog::table::ResolvedTableInfo;
 use databend_common_catalog::table_context::TableContext;
 use databend_common_exception::Result;
 use databend_common_expression::DataField;
 use databend_common_expression::DataSchemaRef;
 use databend_common_expression::DataSchemaRefExt;
 use databend_common_expression::Scalar;
-use databend_common_meta_app::schema::TableInfo;
 use databend_common_sql::ColumnBinding;
 use databend_common_sql::plans::CopyIntoTableMode;
 use databend_common_sql::plans::ValidationMode;
@@ -43,7 +43,7 @@ pub struct CopyIntoTable {
     pub write_mode: CopyIntoTableMode,
     pub validation_mode: ValidationMode,
     pub stage_table_info: StageTableInfo,
-    pub table_info: TableInfo,
+    pub table_info: ResolvedTableInfo,
 
     pub project_columns: Option<Vec<ColumnBinding>>,
     pub source: CopyIntoTableSource,

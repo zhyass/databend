@@ -18,6 +18,7 @@ use std::sync::Arc;
 use databend_common_catalog::lock::LockTableOption;
 use databend_common_catalog::plan::PartStatistics;
 use databend_common_catalog::plan::Partitions;
+use databend_common_catalog::table::ResolvedTableInfo;
 use databend_common_catalog::table::TableExt;
 use databend_common_exception::ErrorCode;
 use databend_common_exception::Result;
@@ -140,6 +141,10 @@ impl MutationInterpreter {
         mutation: &databend_common_sql::plans::Mutation,
         build_res: &mut PipelineBuildResult,
     ) {
+        if mutation.branch_name.is_some() {
+            return;
+        }
+
         let hook_lock_opt = if mutation.lock_guard.is_some() {
             LockTableOption::NoLock
         } else {
@@ -203,10 +208,12 @@ pub async fn build_mutation_info(
     dry_run: bool,
 ) -> Result<MutationBuildInfo> {
     let table = ctx
-        .get_table(
+        .get_table_with_batch(
             &mutation.catalog_name,
             &mutation.database_name,
             &mutation.table_name,
+            mutation.branch_name.as_deref(),
+            None,
         )
         .await?;
     // Check if the table supports mutation.
@@ -236,7 +243,7 @@ pub async fn build_mutation_info(
         ctx.get_table_meta_timestamps(table.as_ref(), table_snapshot.clone())?;
 
     Ok(MutationBuildInfo {
-        table_info,
+        table_info: ResolvedTableInfo::new(&table_info).with_branch(mutation.branch_name.clone()),
         table_snapshot,
         update_stream_meta,
         partitions,

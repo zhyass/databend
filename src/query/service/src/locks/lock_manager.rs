@@ -25,7 +25,6 @@ use databend_common_catalog::table_context::TableContext;
 use databend_common_exception::Result;
 use databend_common_meta_app::schema::CreateLockRevReq;
 use databend_common_meta_app::schema::LockKey;
-use databend_common_meta_app::schema::TableInfo;
 use databend_common_metrics::lock::metrics_inc_shutdown_lock_holder_nums;
 use databend_common_metrics::lock::metrics_inc_start_lock_holder_nums;
 use databend_common_pipeline::core::LockGuard;
@@ -64,9 +63,13 @@ impl LockManager {
         GlobalInstance::get()
     }
 
-    pub fn create_table_lock(table_info: TableInfo) -> Result<Arc<dyn Lock>> {
+    pub fn create_table_lock(catalog_name: &str, ref_id: u64) -> Result<Arc<dyn Lock>> {
         let lock_mgr = LockManager::instance();
-        Ok(TableLock::create(lock_mgr, table_info))
+        Ok(TableLock::create(
+            lock_mgr,
+            catalog_name.to_string(),
+            ref_id,
+        ))
     }
 
     /// The requested lock returns a global incremental revision, listing all existing revisions,

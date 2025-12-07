@@ -101,6 +101,8 @@ use databend_common_meta_app::schema::SequenceIdent;
 use databend_common_meta_app::schema::SetSecurityPolicyAction;
 use databend_common_meta_app::schema::SetTableColumnMaskPolicyReq;
 use databend_common_meta_app::schema::SetTableRowAccessPolicyReq;
+use databend_common_meta_app::schema::SnapshotRef;
+use databend_common_meta_app::schema::SnapshotRefType;
 use databend_common_meta_app::schema::SwapTableReq;
 use databend_common_meta_app::schema::TableCopiedFileInfo;
 use databend_common_meta_app::schema::TableCopiedFileNameIdent;
@@ -113,6 +115,7 @@ use databend_common_meta_app::schema::TableIndexType;
 use databend_common_meta_app::schema::TableInfo;
 use databend_common_meta_app::schema::TableMeta;
 use databend_common_meta_app::schema::TableNameIdent;
+use databend_common_meta_app::schema::TableRefIdent;
 use databend_common_meta_app::schema::TableStatistics;
 use databend_common_meta_app::schema::TruncateTableReq;
 use databend_common_meta_app::schema::UndropDatabaseReq;
@@ -332,6 +335,9 @@ impl SchemaApiTestSuite {
             .await?;
         suite
             .db_table_gc_out_of_retention_time(&b.build().await)
+            .await?;
+        suite
+            .db_table_gc_branch_copied_files(&b.build().await)
             .await?;
         suite
             .table_drop_out_of_retention_time_history(&b.build().await)
@@ -2716,7 +2722,7 @@ impl SchemaApiTestSuite {
                     table_id,
                     seq: MatchSeq::Exact(table_version),
                     new_table_meta: new_table_meta.clone(),
-                    base_snapshot_location: None,
+                    base_snapshot_locations: HashMap::new(),
                 };
 
                 mt.update_multi_table_meta(UpdateMultiTableMetaReq {
@@ -2741,7 +2747,7 @@ impl SchemaApiTestSuite {
                     table_id,
                     seq: MatchSeq::Exact(table_version + 1),
                     new_table_meta: new_table_meta.clone(),
-                    base_snapshot_location: None,
+                    base_snapshot_locations: HashMap::new(),
                 };
                 let res = mt
                     .update_multi_table_meta(UpdateMultiTableMetaReq {
@@ -2767,7 +2773,7 @@ impl SchemaApiTestSuite {
                     table_id,
                     seq: MatchSeq::Exact(table_version),
                     new_table_meta: new_table_meta.clone(),
-                    base_snapshot_location: None,
+                    base_snapshot_locations: HashMap::new(),
                 };
                 let res = mt
                     .update_multi_table_meta_with_sender(
@@ -2848,11 +2854,17 @@ impl SchemaApiTestSuite {
                     table_id,
                     seq: MatchSeq::Exact(table_version),
                     new_table_meta: new_table_meta.clone(),
-                    base_snapshot_location: None,
+                    base_snapshot_locations: HashMap::new(),
                 };
                 mt.update_multi_table_meta(UpdateMultiTableMetaReq {
                     update_table_metas: vec![(req, table.as_ref().clone())],
-                    copied_files: vec![(table_id, upsert_source_table)],
+                    copied_files: vec![(
+                        TableRefIdent {
+                            table_id,
+                            branch_id: None,
+                        },
+                        upsert_source_table,
+                    )],
                     ..Default::default()
                 })
                 .await?
@@ -2898,11 +2910,17 @@ impl SchemaApiTestSuite {
                     table_id,
                     seq: MatchSeq::Exact(table_version),
                     new_table_meta: new_table_meta.clone(),
-                    base_snapshot_location: None,
+                    base_snapshot_locations: HashMap::new(),
                 };
                 mt.update_multi_table_meta(UpdateMultiTableMetaReq {
                     update_table_metas: vec![(req, table.as_ref().clone())],
-                    copied_files: vec![(table_id, upsert_source_table)],
+                    copied_files: vec![(
+                        TableRefIdent {
+                            table_id,
+                            branch_id: None,
+                        },
+                        upsert_source_table,
+                    )],
                     ..Default::default()
                 })
                 .await?
@@ -2948,12 +2966,18 @@ impl SchemaApiTestSuite {
                     table_id,
                     seq: MatchSeq::Exact(table_version),
                     new_table_meta: new_table_meta.clone(),
-                    base_snapshot_location: None,
+                    base_snapshot_locations: HashMap::new(),
                 };
                 let result = mt
                     .update_multi_table_meta(UpdateMultiTableMetaReq {
                         update_table_metas: vec![(req, table.as_ref().clone())],
-                        copied_files: vec![(table_id, upsert_source_table)],
+                        copied_files: vec![(
+                            TableRefIdent {
+                                table_id,
+                                branch_id: None,
+                            },
+                            upsert_source_table,
+                        )],
                         ..Default::default()
                     })
                     .await;
@@ -4301,7 +4325,7 @@ impl SchemaApiTestSuite {
                 table_id,
                 seq: MatchSeq::Any,
                 new_table_meta: table_meta.clone(),
-                base_snapshot_location: None,
+                base_snapshot_locations: HashMap::new(),
             };
 
             let table = mt
@@ -4314,14 +4338,20 @@ impl SchemaApiTestSuite {
 
             let req = UpdateMultiTableMetaReq {
                 update_table_metas: vec![(req, table)],
-                copied_files: vec![(table_id, copied_file_req)],
+                copied_files: vec![(
+                    TableRefIdent {
+                        table_id,
+                        branch_id: None,
+                    },
+                    copied_file_req,
+                )],
                 ..Default::default()
             };
 
             mt.update_multi_table_meta(req).await?.unwrap();
 
             let key = TableCopiedFileNameIdent {
-                table_id,
+                ref_id: table_id,
                 file: "file".to_string(),
             };
 
@@ -4373,7 +4403,7 @@ impl SchemaApiTestSuite {
         info!("--- assert stage file info has been removed");
         {
             let key = TableCopiedFileNameIdent {
-                table_id,
+                ref_id: table_id,
                 file: "file".to_string(),
             };
 
@@ -4441,7 +4471,7 @@ impl SchemaApiTestSuite {
                 table_id,
                 seq: MatchSeq::Any,
                 new_table_meta: create_table_meta.clone(),
-                base_snapshot_location: None,
+                base_snapshot_locations: HashMap::new(),
             };
 
             let table = mt
@@ -4454,14 +4484,20 @@ impl SchemaApiTestSuite {
 
             let req = UpdateMultiTableMetaReq {
                 update_table_metas: vec![(req, table)],
-                copied_files: vec![(table_id, copied_file_req)],
+                copied_files: vec![(
+                    TableRefIdent {
+                        table_id,
+                        branch_id: None,
+                    },
+                    copied_file_req,
+                )],
                 ..Default::default()
             };
 
             mt.update_multi_table_meta(req).await?.unwrap();
 
             let key = TableCopiedFileNameIdent {
-                table_id,
+                ref_id: table_id,
                 file: "file".to_string(),
             };
 
@@ -4577,7 +4613,7 @@ impl SchemaApiTestSuite {
         info!("--- assert stage file info has been removed");
         {
             let key = TableCopiedFileNameIdent {
-                table_id,
+                ref_id: table_id,
                 file: "file".to_string(),
             };
 
@@ -4585,6 +4621,192 @@ impl SchemaApiTestSuite {
             assert!(resp.is_err());
         }
 
+        Ok(())
+    }
+
+    #[fastrace::trace]
+    async fn db_table_gc_branch_copied_files<MT: SchemaApi + kvapi::KVApi<Error = MetaError>>(
+        self,
+        mt: &MT,
+    ) -> anyhow::Result<()> {
+        let tenant_name = "db_table_gc_branch_copied_files";
+        let tenant = Tenant::new_literal(tenant_name);
+        let db1_name = "db1";
+        let tb1_name = "tb1";
+        let tbl_name_ident = TableNameIdent {
+            tenant: tenant.clone(),
+            db_name: db1_name.to_string(),
+            table_name: tb1_name.to_string(),
+        };
+
+        let mut util = Util::new(mt, tenant_name, db1_name, tb1_name, "JSON");
+        util.create_db().await?;
+        info!("create database");
+        let db_id = util.db_id();
+
+        let created_on = Utc::now();
+        let schema = || {
+            Arc::new(TableSchema::new(vec![TableField::new(
+                "number",
+                TableDataType::Number(NumberDataType::UInt64),
+            )]))
+        };
+
+        let (table_id, _table_meta) = util.create_table_with(|meta| meta, |req| req).await?;
+
+        info!("--- create branch and add copied files for both main table and branch");
+        {
+            // First, add a branch to the table meta
+            let branch_id = 100u64;
+            let mut table_meta = TableMeta {
+                schema: schema(),
+                engine: "JSON".to_string(),
+                created_on,
+                ..TableMeta::default()
+            };
+
+            // Insert a branch ref into table meta
+            table_meta
+                .refs
+                .insert("test_branch".to_string(), SnapshotRef {
+                    id: branch_id,
+                    expire_at: None,
+                    typ: SnapshotRefType::Branch,
+                    loc: "_ss/snapshot_test".to_string(),
+                });
+
+            // Update table meta with branch
+            let branch_req = UpdateTableMetaReq {
+                table_id,
+                seq: MatchSeq::Any,
+                new_table_meta: table_meta.clone(),
+                base_snapshot_locations: HashMap::new(),
+            };
+
+            // Add copied files for main table (branch_id = 0)
+            let stage_info = TableCopiedFileInfo {
+                etag: Some("etag_main".to_owned()),
+                content_length: 1024,
+                last_modified: Some(Utc::now()),
+            };
+            let mut main_file_info = BTreeMap::new();
+            main_file_info.insert("main_file".to_string(), stage_info.clone());
+
+            let main_copied_file_req = UpsertTableCopiedFileReq {
+                file_info: main_file_info.clone(),
+                ttl: Some(std::time::Duration::from_secs(86400)),
+                insert_if_not_exists: true,
+            };
+
+            // Add copied files for branch (branch_id = 100)
+            let branch_stage_info = TableCopiedFileInfo {
+                etag: Some("etag_branch".to_owned()),
+                content_length: 2048,
+                last_modified: Some(Utc::now()),
+            };
+            let mut branch_file_info = BTreeMap::new();
+            branch_file_info.insert("branch_file_1".to_string(), branch_stage_info.clone());
+            branch_file_info.insert("branch_file_2".to_string(), branch_stage_info.clone());
+
+            let branch_copied_file_req = UpsertTableCopiedFileReq {
+                file_info: branch_file_info.clone(),
+                ttl: Some(std::time::Duration::from_secs(86400)),
+                insert_if_not_exists: true,
+            };
+
+            let table = mt
+                .get_table(GetTableReq {
+                    inner: tbl_name_ident.clone(),
+                })
+                .await?
+                .as_ref()
+                .clone();
+
+            let req = UpdateMultiTableMetaReq {
+                update_table_metas: vec![(branch_req, table)],
+                copied_files: vec![
+                    (
+                        TableRefIdent {
+                            table_id,
+                            branch_id: None,
+                        },
+                        main_copied_file_req,
+                    ),
+                    (
+                        TableRefIdent {
+                            table_id,
+                            branch_id: Some(branch_id),
+                        },
+                        branch_copied_file_req,
+                    ),
+                ],
+                ..Default::default()
+            };
+
+            mt.update_multi_table_meta(req).await?.unwrap();
+
+            // Verify main table copied file exists
+            let main_key = TableCopiedFileNameIdent {
+                ref_id: table_id,
+                file: "main_file".to_string(),
+            };
+            let main_file: TableCopiedFileInfo = get_kv_data(mt, &main_key).await?;
+            assert_eq!(main_file.etag, Some("etag_main".to_owned()));
+
+            // Verify branch copied files exist
+            let branch_key_1 = TableCopiedFileNameIdent {
+                ref_id: branch_id,
+                file: "branch_file_1".to_string(),
+            };
+            let branch_file_1: TableCopiedFileInfo = get_kv_data(mt, &branch_key_1).await?;
+            assert_eq!(branch_file_1.etag, Some("etag_branch".to_owned()));
+
+            let branch_key_2 = TableCopiedFileNameIdent {
+                ref_id: branch_id,
+                file: "branch_file_2".to_string(),
+            };
+            let branch_file_2: TableCopiedFileInfo = get_kv_data(mt, &branch_key_2).await?;
+            assert_eq!(branch_file_2.etag, Some("etag_branch".to_owned()));
+
+            info!("--- verified copied files for main table and branch exist");
+        }
+
+        // Drop the database with past drop_on time
+        let drop_on = Some(Utc::now() - Duration::days(1));
+        let drop_data = DatabaseMeta {
+            engine: "github".to_string(),
+            drop_on,
+            ..Default::default()
+        };
+        let id_key = db_id;
+        let data = serialize_struct(&drop_data)?;
+        upsert_test_data(mt, &id_key, data).await?;
+
+        info!("--- gc the data");
+        {
+            let req = ListDroppedTableReq::new(&tenant);
+            let resp = mt.get_drop_table_infos(req).await?;
+
+            let req = GcDroppedTableReq {
+                tenant: tenant.clone(),
+                catalog: "default".to_string(),
+                drop_ids: resp.drop_ids.clone(),
+            };
+            mt.gc_drop_tables(req).await?;
+        }
+
+        info!("--- assert all copied files (main and branch) have been removed");
+        {
+            // Verify main table copied file is removed
+            let main_key = TableCopiedFileNameIdent {
+                ref_id: table_id,
+                file: "main_file".to_string(),
+            };
+            let resp: Result<TableCopiedFileInfo, KVAppError> = get_kv_data(mt, &main_key).await;
+            assert!(resp.is_err(), "main table copied file should be removed");
+        }
+
+        info!("--- test completed successfully");
         Ok(())
     }
 
@@ -6218,6 +6440,10 @@ impl SchemaApiTestSuite {
             table_id = resp_table_id;
         }
 
+        let ref_ident = TableRefIdent {
+            table_id,
+            branch_id: None,
+        };
         info!("--- create and get stage file info");
         {
             let stage_info = TableCopiedFileInfo {
@@ -6238,7 +6464,7 @@ impl SchemaApiTestSuite {
                 table_id,
                 seq: MatchSeq::Any,
                 new_table_meta: table_meta(created_on),
-                base_snapshot_location: None,
+                base_snapshot_locations: HashMap::new(),
             };
 
             let table = mt
@@ -6251,14 +6477,14 @@ impl SchemaApiTestSuite {
 
             let req = UpdateMultiTableMetaReq {
                 update_table_metas: vec![(req, table)],
-                copied_files: vec![(table_id, copied_file_req)],
+                copied_files: vec![(ref_ident.clone(), copied_file_req)],
                 ..Default::default()
             };
 
             mt.update_multi_table_meta(req).await?.unwrap();
 
             let req = GetTableCopiedFileReq {
-                table_id,
+                ref_ident: ref_ident.clone(),
                 files: vec!["file".to_string()],
             };
 
@@ -6289,7 +6515,7 @@ impl SchemaApiTestSuite {
                 table_id,
                 seq: MatchSeq::Any,
                 new_table_meta: table_meta(created_on),
-                base_snapshot_location: None,
+                base_snapshot_locations: HashMap::new(),
             };
 
             let table = mt
@@ -6302,14 +6528,14 @@ impl SchemaApiTestSuite {
 
             let req = UpdateMultiTableMetaReq {
                 update_table_metas: vec![(req, table)],
-                copied_files: vec![(table_id, copied_file_req)],
+                copied_files: vec![(ref_ident.clone(), copied_file_req)],
                 ..Default::default()
             };
 
             mt.update_multi_table_meta(req).await?.unwrap();
 
             let req = GetTableCopiedFileReq {
-                table_id,
+                ref_ident,
                 files: vec!["file2".to_string()],
             };
 
@@ -6340,7 +6566,10 @@ impl SchemaApiTestSuite {
         info!("--- get copied file infos");
         {
             let req = GetTableCopiedFileReq {
-                table_id,
+                ref_ident: TableRefIdent {
+                    table_id,
+                    branch_id: None,
+                },
                 files: file_infos.keys().cloned().collect(),
             };
 
@@ -6364,7 +6593,10 @@ impl SchemaApiTestSuite {
             mt.truncate_table(req).await?;
 
             let req = GetTableCopiedFileReq {
-                table_id,
+                ref_ident: TableRefIdent {
+                    table_id,
+                    branch_id: None,
+                },
                 files: file_infos.keys().cloned().collect(),
             };
 
@@ -7782,6 +8014,11 @@ impl SchemaApiTestSuite {
             table_id = table_id_result;
         };
 
+        let ref_ident = TableRefIdent {
+            table_id,
+            branch_id: None,
+        };
+
         info!("--- create and get stage file info");
         {
             let stage_info = TableCopiedFileInfo {
@@ -7802,7 +8039,7 @@ impl SchemaApiTestSuite {
                 table_id,
                 seq: MatchSeq::Any,
                 new_table_meta: table_meta(created_on),
-                base_snapshot_location: None,
+                base_snapshot_locations: HashMap::new(),
             };
 
             let table = mt
@@ -7815,14 +8052,14 @@ impl SchemaApiTestSuite {
 
             let req = UpdateMultiTableMetaReq {
                 update_table_metas: vec![(req, table)],
-                copied_files: vec![(table_id, copied_file_req)],
+                copied_files: vec![(ref_ident.clone(), copied_file_req)],
                 ..Default::default()
             };
 
             mt.update_multi_table_meta(req).await?.unwrap();
 
             let req = GetTableCopiedFileReq {
-                table_id,
+                ref_ident: ref_ident.clone(),
                 files: vec!["file".to_string()],
             };
 
@@ -7836,7 +8073,7 @@ impl SchemaApiTestSuite {
         {
             // get previous file info
             let req = GetTableCopiedFileReq {
-                table_id,
+                ref_ident: ref_ident.clone(),
                 files: vec!["file".to_string()],
             };
             let resp = mt.get_table_copied_file_info(req).await?;
@@ -7861,7 +8098,7 @@ impl SchemaApiTestSuite {
                 table_id,
                 seq: MatchSeq::Any,
                 new_table_meta: table_meta(created_on),
-                base_snapshot_location: None,
+                base_snapshot_locations: HashMap::new(),
             };
 
             let table = mt
@@ -7874,7 +8111,7 @@ impl SchemaApiTestSuite {
 
             let req = UpdateMultiTableMetaReq {
                 update_table_metas: vec![(req, table)],
-                copied_files: vec![(table_id, copied_file_req)],
+                copied_files: vec![(ref_ident.clone(), copied_file_req)],
                 ..Default::default()
             };
 
@@ -7884,7 +8121,7 @@ impl SchemaApiTestSuite {
             assert_eq!(ErrorCode::DUPLICATED_UPSERT_FILES, err.code());
 
             let req = GetTableCopiedFileReq {
-                table_id,
+                ref_ident: ref_ident.clone(),
                 files: vec!["file".to_string(), "file_not_exist".to_string()],
             };
 
@@ -7917,7 +8154,7 @@ impl SchemaApiTestSuite {
                 table_id,
                 seq: MatchSeq::Any,
                 new_table_meta: table_meta(created_on),
-                base_snapshot_location: None,
+                base_snapshot_locations: HashMap::new(),
             };
 
             let table = mt
@@ -7930,14 +8167,14 @@ impl SchemaApiTestSuite {
 
             let req = UpdateMultiTableMetaReq {
                 update_table_metas: vec![(req, table)],
-                copied_files: vec![(table_id, copied_file_req)],
+                copied_files: vec![(ref_ident.clone(), copied_file_req)],
                 ..Default::default()
             };
 
             mt.update_multi_table_meta(req).await?.unwrap();
 
             let req = GetTableCopiedFileReq {
-                table_id,
+                ref_ident,
                 files: vec!["file".to_string(), "file_not_exist".to_string()],
             };
 
@@ -8371,12 +8608,18 @@ where MT: SchemaApi + kvapi::KVApi<Error = MetaError>
             table_id: self.table_id,
             seq: MatchSeq::Any,
             new_table_meta: self.table_meta(),
-            base_snapshot_location: None,
+            base_snapshot_locations: HashMap::new(),
         };
 
         let req = UpdateMultiTableMetaReq {
             update_table_metas: vec![(req, Default::default())],
-            copied_files: vec![(self.table_id, copied_file_req)],
+            copied_files: vec![(
+                TableRefIdent {
+                    table_id: self.table_id,
+                    branch_id: None,
+                },
+                copied_file_req,
+            )],
             ..Default::default()
         };
 

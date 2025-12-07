@@ -21,6 +21,7 @@ use databend_common_catalog::plan::PartInfoType;
 use databend_common_catalog::plan::PartStatistics;
 use databend_common_catalog::plan::Partitions;
 use databend_common_catalog::plan::Projection;
+use databend_common_catalog::table::ResolvedTableInfo;
 use databend_common_catalog::table::Table;
 use databend_common_catalog::table_context::TableContext;
 use databend_common_exception::Result;
@@ -33,7 +34,6 @@ use databend_common_expression::FunctionContext;
 use databend_common_expression::type_check::check_function;
 use databend_common_expression::types::DataType;
 use databend_common_functions::BUILTIN_FUNCTIONS;
-use databend_common_meta_app::schema::TableInfo;
 use databend_common_pipeline::sources::OneBlockSource;
 use databend_common_pipeline_transforms::TransformPipelineHelper;
 use databend_common_pipeline_transforms::columns::TransformAddStreamColumns;
@@ -63,7 +63,7 @@ use crate::pipelines::PipelineBuilder;
 pub struct MutationSource {
     pub meta: PhysicalPlanMeta,
     pub table_index: IndexType,
-    pub table_info: TableInfo,
+    pub table_info: ResolvedTableInfo,
     pub filters: Option<Filters>,
     pub output_schema: DataSchemaRef,
     pub input_type: MutationType,
@@ -132,7 +132,7 @@ impl IPhysicalPlan for MutationSource {
                     let meta = CommitMeta {
                         conflict_resolve_context: ConflictResolveContext::None,
                         new_segment_locs: vec![],
-                        table_id: table.get_id(),
+                        table_id: table.table_or_branch_id(),
                         virtual_schema: None,
                         hll: HashMap::new(),
                     };

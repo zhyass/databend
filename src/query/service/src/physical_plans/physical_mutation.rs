@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use databend_common_catalog::plan::NUM_ROW_ID_PREFIX_BITS;
+use databend_common_catalog::table::ResolvedTableInfo;
 use databend_common_catalog::table::Table;
 use databend_common_catalog::table_context::TableContext;
 use databend_common_exception::ErrorCode;
@@ -39,7 +40,6 @@ use databend_common_expression::type_check::check_function;
 use databend_common_expression::types::DataType;
 use databend_common_expression::types::NumberDataType;
 use databend_common_functions::BUILTIN_FUNCTIONS;
-use databend_common_meta_app::schema::TableInfo;
 use databend_common_pipeline::core::InputPort;
 use databend_common_pipeline::core::OutputPort;
 use databend_common_pipeline::core::Pipe;
@@ -96,7 +96,7 @@ pub const PREDICATE_COLUMN_INDEX: IndexType = u64::MAX as usize;
 pub struct Mutation {
     pub meta: PhysicalPlanMeta,
     pub input: PhysicalPlan,
-    pub table_info: TableInfo,
+    pub table_info: ResolvedTableInfo,
     // (DataSchemaRef, Option<RemoteExpr>, Vec<RemoteExpr>,Vec<usize>) => (source_schema, condition, value_exprs)
     pub unmatched: Vec<(DataSchemaRef, Option<RemoteExpr>, Vec<RemoteExpr>)>,
     pub segments: Vec<(usize, Location)>,
@@ -251,6 +251,7 @@ impl PhysicalPlanBuilder {
             catalog_name,
             database_name,
             table_name,
+            branch_name,
             table_name_alias,
             matched_evaluators,
             unmatched_evaluators,
@@ -302,13 +303,6 @@ impl PhysicalPlanBuilder {
             return Ok(plan);
         }
 
-        let table = self
-            .ctx
-            .get_table(catalog_name, database_name, table_name)
-            .await?;
-        let table_info = table.get_table_info();
-        let table_name = table_name.clone();
-
         let mutation_build_info = self.mutation_build_info.clone().unwrap();
         let mutation_input_schema = plan.output_schema()?;
 
@@ -317,7 +311,7 @@ impl PhysicalPlanBuilder {
             plan = PhysicalPlan::new(CommitSink {
                 input: plan,
                 snapshot: mutation_build_info.table_snapshot,
-                table_info: table_info.clone(),
+                table_info: mutation_build_info.table_info,
                 // let's use update first, we will do some optimizations and select exact strategy
                 commit_type: CommitType::Truncate {
                     mode: TruncateMode::Delete,
@@ -331,6 +325,17 @@ impl PhysicalPlanBuilder {
             plan.adjust_plan_id(&mut 0);
             return Ok(plan);
         }
+
+        let table = self
+            .ctx
+            .get_table_with_batch(
+                catalog_name,
+                database_name,
+                table_name,
+                branch_name.as_deref(),
+                None,
+            )
+            .await?;
 
         if *strategy == MutationStrategy::Direct {
             // MutationStrategy::Direct: If the mutation filter is a simple expression,
@@ -409,7 +414,7 @@ impl PhysicalPlanBuilder {
             plan = PhysicalPlan::new(CommitSink {
                 input: plan,
                 snapshot: mutation_build_info.table_snapshot,
-                table_info: table_info.clone(),
+                table_info: mutation_build_info.table_info,
                 // let's use update first, we will do some optimizations and select exact strategy
                 commit_type: CommitType::Mutation {
                     kind: mutation_kind,
@@ -442,7 +447,7 @@ impl PhysicalPlanBuilder {
                 bind_context,
                 mutation_input_schema.clone(),
                 database_name,
-                &table_name,
+                table_name,
             )?;
         }
 
@@ -585,7 +590,7 @@ impl PhysicalPlanBuilder {
 
         plan = PhysicalPlan::new(MutationManipulate {
             input: plan,
-            table_info: table_info.clone(),
+            table_info: mutation_build_info.table_info.clone(),
             unmatched: unmatched.clone(),
             matched: matched.clone(),
             field_index_of_input_schema: field_index_of_input_schema.clone(),
@@ -613,7 +618,7 @@ impl PhysicalPlanBuilder {
 
         plan = PhysicalPlan::new(Mutation {
             input: plan,
-            table_info: table_info.clone(),
+            table_info: mutation_build_info.table_info.clone(),
             unmatched,
             segments: segments.clone(),
             distributed: *distributed,
@@ -645,7 +650,7 @@ impl PhysicalPlanBuilder {
         let mut physical_plan = PhysicalPlan::new(CommitSink {
             input: plan,
             snapshot: mutation_build_info.table_snapshot,
-            table_info: table_info.clone(),
+            table_info: mutation_build_info.table_info,
             // let's use update first, we will do some optimizations and select exact strategy
             commit_type: CommitType::Mutation {
                 kind: mutation_kind,

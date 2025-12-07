@@ -16,9 +16,9 @@ use std::any::Any;
 use std::sync::atomic;
 use std::sync::atomic::AtomicUsize;
 
-use databend_common_catalog::plan::DataSourceInfo;
 use databend_common_catalog::plan::DataSourcePlan;
 use databend_common_catalog::plan::ReclusterTask;
+use databend_common_catalog::table::ResolvedTableInfo;
 use databend_common_catalog::table::Table;
 use databend_common_catalog::table_context::TableContext;
 use databend_common_config::GlobalConfig;
@@ -28,7 +28,6 @@ use databend_common_expression::DataSchemaRef;
 use databend_common_expression::DataSchemaRefExt;
 use databend_common_expression::SortColumnDescription;
 use databend_common_io::constants::DEFAULT_BLOCK_BUFFER_SIZE;
-use databend_common_meta_app::schema::TableInfo;
 use databend_common_metrics::storage::metrics_inc_recluster_block_bytes_to_read;
 use databend_common_metrics::storage::metrics_inc_recluster_block_nums_to_read;
 use databend_common_metrics::storage::metrics_inc_recluster_row_nums_to_read;
@@ -63,7 +62,7 @@ use crate::spillers::SpillerDiskConfig;
 pub struct Recluster {
     pub meta: PhysicalPlanMeta,
     pub tasks: Vec<ReclusterTask>,
-    pub table_info: TableInfo,
+    pub table_info: ResolvedTableInfo,
     pub table_meta_timestamps: TableMetaTimestamps,
 }
 
@@ -126,7 +125,7 @@ impl IPhysicalPlan for Recluster {
                 let schema = table.schema_with_stream();
                 let description = task.stats.get_description(&table_info.desc);
                 let plan = DataSourcePlan {
-                    source_info: DataSourceInfo::TableSource(table_info.clone()),
+                    source_info: table.get_data_source_info(),
                     output_schema: schema.clone(),
                     parts: task.parts.clone(),
                     statistics: task.stats.clone(),
@@ -260,7 +259,7 @@ impl IPhysicalPlan for Recluster {
 pub struct HilbertPartition {
     pub meta: PhysicalPlanMeta,
     pub input: PhysicalPlan,
-    pub table_info: TableInfo,
+    pub table_info: ResolvedTableInfo,
     pub num_partitions: usize,
     pub table_meta_timestamps: TableMetaTimestamps,
     pub rows_per_block: usize,
