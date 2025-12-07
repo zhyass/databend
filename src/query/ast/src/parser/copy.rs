@@ -30,13 +30,13 @@ use crate::ast::Statement::CopyIntoLocation;
 use crate::parser::common::comma_separated_list0;
 use crate::parser::common::comma_separated_list1;
 use crate::parser::common::ident;
-use crate::parser::common::table_ref;
 use crate::parser::common::IResult;
 use crate::parser::common::*;
 use crate::parser::expr::literal_bool;
 use crate::parser::expr::literal_string;
 use crate::parser::expr::literal_u64;
 use crate::parser::query::query;
+use crate::parser::query::with_options;
 use crate::parser::stage::file_format_clause;
 use crate::parser::stage::file_location;
 use crate::parser::statement::hint;
@@ -91,7 +91,13 @@ pub fn copy_into_table(i: Input) -> IResult<Statement> {
 
 fn copy_into_location(i: Input) -> IResult<Statement> {
     let copy_into_location_source = alt((
-        map(table_ref, CopyIntoLocationSource::Table),
+        map(
+            rule! { #table_ref ~ #with_options? },
+            |(table, with_options)| CopyIntoLocationSource::Table {
+                table: Box::new(table),
+                with_options,
+            },
+        ),
         map(rule! { "(" ~ #query ~ ")" }, |(_, query, _)| {
             CopyIntoLocationSource::Query(Box::new(query))
         }),

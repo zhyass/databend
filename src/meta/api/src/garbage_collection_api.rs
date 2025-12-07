@@ -194,12 +194,16 @@ async fn remove_copied_files_for_dropped_table(
         txn.condition
             .push(txn_cond_eq_seq(table_id, seq_table_meta.seq));
 
+        // List all copied files (both main table and branches) for the dropped table
+        // Use level=2 to get prefix: __fd_table_copied_files/{table_id}/
+        // This will list all files under this table, including main table (branch_id=0) and all branches
         let copied_file_ident = TableCopiedFileNameIdent {
             table_id: table_id.table_id,
+            branch_id: 0,
             file: "dummy".to_string(),
         };
 
-        let dir_name = DirName::new(copied_file_ident);
+        let dir_name = DirName::new_with_level(copied_file_ident, 2);
 
         let key_stream = kv_api.list_pb_keys(&dir_name).await?;
         let copied_files = key_stream.take(batch_size).try_collect::<Vec<_>>().await?;

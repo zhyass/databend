@@ -19,12 +19,12 @@ use derive_visitor::Drive;
 use derive_visitor::DriveMut;
 
 use crate::ast::write_comma_separated_list;
-use crate::ast::write_dot_separated_list;
 use crate::ast::Expr;
 use crate::ast::FileFormatOptions;
 use crate::ast::Hint;
 use crate::ast::Identifier;
 use crate::ast::Query;
+use crate::ast::TableRef;
 use crate::ast::With;
 
 #[derive(Debug, Clone, PartialEq, Drive, DriveMut)]
@@ -32,9 +32,7 @@ pub struct InsertStmt {
     pub hints: Option<Hint>,
     // With clause, common table expression
     pub with: Option<With>,
-    pub catalog: Option<Identifier>,
-    pub database: Option<Identifier>,
-    pub table: Identifier,
+    pub table: TableRef,
     pub columns: Vec<Identifier>,
     pub source: InsertSource,
     pub overwrite: bool,
@@ -54,13 +52,7 @@ impl Display for InsertStmt {
         } else {
             write!(f, "INTO ")?;
         }
-        write_dot_separated_list(
-            f,
-            self.catalog
-                .iter()
-                .chain(&self.database)
-                .chain(Some(&self.table)),
-        )?;
+        write!(f, "{}", self.table)?;
         if !self.columns.is_empty() {
             write!(f, " (")?;
             write_comma_separated_list(f, &self.columns)?;

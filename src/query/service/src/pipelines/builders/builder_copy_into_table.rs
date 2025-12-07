@@ -154,6 +154,11 @@ impl PipelineBuilder {
         path_prefix: Option<String>,
     ) -> Result<Option<UpsertTableCopiedFileReq>> {
         let mut copied_file_tree = BTreeMap::new();
+        // Get branch_id: 0 for main table, non-zero for branches
+        let branch_id = to_table
+            .get_table_branch()
+            .map(|b| b.branch_id())
+            .unwrap_or(0);
         for file in copied_files {
             // Short the etag to 7 bytes for less space in metasrv.
             let short_etag = file.etag.clone().map(|mut v| {
@@ -188,6 +193,7 @@ impl PipelineBuilder {
             } else {
                 debug!("upsert_copied_files_info: {:?}", copied_file_tree);
                 let req = UpsertTableCopiedFileReq {
+                    branch_id,
                     file_info: copied_file_tree,
                     ttl: Some(Duration::from_hours(expire_hours)),
                     insert_if_not_exists: !options.force,

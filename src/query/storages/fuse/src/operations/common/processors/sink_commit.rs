@@ -146,7 +146,6 @@ where F: SnapshotGenerator + Send + Sync + 'static
     ) -> Result<ProcessorPtr> {
         let purge_mode = Self::purge_mode(ctx.as_ref(), table, &snapshot_gen)?;
         let enable_auto_analyze = Self::enable_auto_analyze(ctx.clone(), table, &snapshot_gen);
-
         let vacuum_handler = if LicenseManagerSwitch::instance()
             .check_enterprise_enabled(ctx.get_license_key(), Vacuum)
             .is_ok()
@@ -221,9 +220,9 @@ where F: SnapshotGenerator + Send + Sync + 'static
         snapshot_gen
             .as_any()
             .downcast_ref::<MutationGenerator>()
-            .is_some_and(|gen| {
+            .is_some_and(|v| {
                 matches!(
-                    gen.mutation_kind,
+                    v.mutation_kind,
                     MutationKind::Update
                         | MutationKind::Delete
                         | MutationKind::MergeInto
@@ -314,14 +313,14 @@ where F: SnapshotGenerator + Send + Sync + 'static
         snapshot_gen
             .as_any()
             .downcast_ref::<TruncateGenerator>()
-            .is_some_and(|gen| matches!(gen.mode(), TruncateMode::DropAll))
+            .is_some_and(|v| matches!(v.mode(), TruncateMode::DropAll))
     }
 
     fn need_truncate(&self) -> bool {
         self.snapshot_gen
             .as_any()
             .downcast_ref::<TruncateGenerator>()
-            .is_some_and(|gen| !matches!(gen.mode(), TruncateMode::Delete))
+            .is_some_and(|v| !matches!(v.mode(), TruncateMode::Delete))
     }
 
     fn is_append_only_txn(&self) -> bool {
@@ -443,11 +442,14 @@ where F: SnapshotGenerator + Send + Sync + 'static
                     table_stats_gen,
                 ) {
                     Ok(snapshot) => {
-                        set_compaction_num_block_hint(
-                            self.ctx.as_ref(),
-                            table_info.name.as_str(),
-                            &snapshot.summary,
-                        );
+                        // No need enable auto compaction for table branch.
+                        if self.table.get_table_branch().is_none() {
+                            set_compaction_num_block_hint(
+                                self.ctx.as_ref(),
+                                table_info.name.as_str(),
+                                &snapshot.summary,
+                            );
+                        }
                         self.state = State::TryCommit {
                             data: snapshot.to_bytes()?,
                             snapshot,
@@ -537,9 +539,18 @@ where F: SnapshotGenerator + Send + Sync + 'static
                 table_info,
             } => {
                 snapshot.ensure_segments_unique()?;
-                let location = self
-                    .location_gen
-                    .snapshot_location_from_uuid(&snapshot.snapshot_id, TableSnapshot::VERSION)?;
+                let location = if let Some(branch) = &self.table.get_table_branch() {
+                    self.location_gen.ref_snapshot_location_from_uuid(
+                        branch.branch_id(),
+                        &snapshot.snapshot_id,
+                        TableSnapshot::VERSION,
+                    )?
+                } else {
+                    self.location_gen.snapshot_location_from_uuid(
+                        &snapshot.snapshot_id,
+                        TableSnapshot::VERSION,
+                    )?
+                };
                 self.dal.write(&location, data).await?;
 
                 // enable auto analyze.

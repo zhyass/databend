@@ -414,9 +414,17 @@ impl AccessLogger {
             })
             .collect::<Vec<_>>();
 
+        let object_name = if let Some(branch) = &plan.branch {
+            format!(
+                "{}.{}.{}/{}",
+                plan.catalog, plan.database, plan.table, branch
+            )
+        } else {
+            format!("{}.{}.{}", plan.catalog, plan.database, plan.table)
+        };
         let modified_object = AccessObject {
             object_domain: ObjectDomain::Table,
-            object_name: format!("{}.{}.{}", plan.catalog, plan.database, plan.table),
+            object_name,
             columns: Some(columns),
             stage_type: None,
         };
@@ -445,10 +453,20 @@ impl AccessLogger {
     fn log_copy_into_table(&mut self, plan: &CopyIntoTablePlan) {
         let modified_object = AccessObject {
             object_domain: ObjectDomain::Table,
-            object_name: format!(
-                "{}.{}.{}",
-                plan.catalog_info.name_ident.catalog_name, plan.database_name, plan.table_name
-            ),
+            object_name: if let Some(branch) = &plan.branch {
+                format!(
+                    "{}.{}.{}/{}",
+                    plan.catalog_info.name_ident.catalog_name,
+                    plan.database_name,
+                    plan.table_name,
+                    branch
+                )
+            } else {
+                format!(
+                    "{}.{}.{}",
+                    plan.catalog_info.name_ident.catalog_name, plan.database_name, plan.table_name
+                )
+            },
             columns: Some(
                 plan.required_values_schema
                     .fields

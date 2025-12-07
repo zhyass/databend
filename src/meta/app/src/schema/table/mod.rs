@@ -1138,9 +1138,19 @@ impl Display for TableIdToName {
     }
 }
 
+/// Identifier for a copied file in a table or branch.
+///
+/// # Key Structure
+/// Files are stored with the following key pattern:
+/// - Main table: `__fd_table_copied_files/{table_id}/0/{file_name}`
+/// - Branch: `__fd_table_copied_files/{table_id}/{branch_id}/{file_name}`
+///
+/// Where `branch_id = 0` represents the main table, and non-zero values represent branches.
 #[derive(Clone, Debug, Eq, PartialEq, Default)]
 pub struct TableCopiedFileNameIdent {
     pub table_id: u64,
+    /// Branch ID. Use 0 for main table, non-zero for branches.
+    pub branch_id: u64,
     pub file: String,
 }
 
@@ -1148,8 +1158,8 @@ impl fmt::Display for TableCopiedFileNameIdent {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "TableCopiedFileNameIdent{{table_id:{}, file:{}}}",
-            self.table_id, self.file
+            "TableCopiedFileNameIdent{{table_id:{}, branch_id:{:?},file:{}}}",
+            self.table_id, self.branch_id, self.file
         )
     }
 }
@@ -1164,6 +1174,8 @@ pub struct TableCopiedFileInfo {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GetTableCopiedFileReq {
     pub table_id: u64,
+    /// Branch ID. Use 0 for main table, non-zero for branches.
+    pub branch_id: u64,
     pub files: Vec<String>,
 }
 
@@ -1176,6 +1188,8 @@ pub type ListTableCopiedFileReply = GetTableCopiedFileReply;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UpsertTableCopiedFileReq {
+    /// Branch ID. Use 0 for main table, non-zero for branches.
+    pub branch_id: u64,
     pub file_info: BTreeMap<String, TableCopiedFileInfo>,
     /// If not None, specifies the time-to-live for the keys.
     pub ttl: Option<Duration>,
@@ -1316,13 +1330,46 @@ mod kvapi_key_impl {
             // TODO: file is not escaped!!!
             //       There already are non escaped data stored on disk.
             //       We can not change it anymore.
-            b.push_u64(self.table_id).push_raw(&self.file)
+
+            // Key structure: __fd_table_copied_files/{table_id}/{branch_id}/{file_name}
+            // - branch_id = 0: represents main table
+            // - branch_id > 0: represents a specific branch
+            b.push_u64(self.table_id)
+                .push_u64(self.branch_id)
+                .push_raw(&self.file)
         }
 
         fn decode_key(p: &mut KeyParser) -> Result<Self, kvapi::KeyError> {
             let table_id = p.next_u64()?;
-            let file = p.tail_raw()?.to_string();
-            Ok(Self { table_id, file })
+            let rest = p.tail_raw()?.to_string();
+
+            // Try to parse the format: table_id/branch_id/file_name
+            let (branch_id, file) = match rest.split_once('/') {
+                Some((candidate, tail)) => match candidate.parse::<u64>() {
+                    Ok(id) => {
+                        // New format with explicit branch_id
+                        // branch_id = 0: main table
+                        // branch_id > 0: specific branch
+                        (id, tail.to_string())
+                    }
+                    Err(_) => {
+                        // Old format: table_id/file_name (no branch_id)
+                        // Backward compatibility: treat as main table (branch_id = 0)
+                        (0, rest)
+                    }
+                },
+                None => {
+                    // Old format: table_id/file_name (no '/' found after table_id)
+                    // Backward compatibility: treat as main table (branch_id = 0)
+                    (0, rest)
+                }
+            };
+
+            Ok(Self {
+                table_id,
+                branch_id,
+                file,
+            })
         }
     }
 
@@ -1384,10 +1431,11 @@ mod tests {
 
     #[test]
     fn test_table_copied_file_name_ident_conversion() -> Result<(), kvapi::KeyError> {
-        // test with a key has a file has multi path
+        // test with a key has a file has multi path (main table: branch_id = 0)
         {
             let name = TableCopiedFileNameIdent {
                 table_id: 2,
+                branch_id: 0, // 0 = main table
                 file: "/path/to/file".to_owned(),
             };
 
@@ -1395,9 +1443,10 @@ mod tests {
             assert_eq!(
                 key,
                 format!(
-                    "{}/{}/{}",
+                    "{}/{}/{}/{}",
                     TableCopiedFileNameIdent::PREFIX,
                     name.table_id,
+                    name.branch_id,
                     name.file,
                 )
             );
@@ -1417,15 +1466,41 @@ mod tests {
             });
         }
 
-        // test with a key has 5 sub-path but an empty file string
+        // test with old format (backward compatibility): table_id/file_name
+        // This old format should be treated as main table (branch_id = 0)
         {
             let key = format!("{}/{}/{}", TableCopiedFileNameIdent::PREFIX, 2, "");
             let res = TableCopiedFileNameIdent::from_str_key(&key)?;
             assert_eq!(res, TableCopiedFileNameIdent {
                 table_id: 2,
+                branch_id: 0, // Old format is treated as main table
                 file: "".to_string(),
             });
         }
+
+        // test with new format: table_id/branch_id/file_name
+        {
+            let name = TableCopiedFileNameIdent {
+                table_id: 3,
+                branch_id: 123, // Specific branch
+                file: "data.parquet".to_owned(),
+            };
+
+            let key = name.to_string_key();
+            assert_eq!(
+                key,
+                format!(
+                    "{}/{}/{}/{}",
+                    TableCopiedFileNameIdent::PREFIX,
+                    name.table_id,
+                    name.branch_id,
+                    name.file,
+                )
+            );
+            let from = TableCopiedFileNameIdent::from_str_key(&key)?;
+            assert_eq!(from, name);
+        }
+
         Ok(())
     }
 }

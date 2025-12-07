@@ -179,10 +179,7 @@ impl TableRefVisitor {
             return;
         }
         if let TableReference::Table {
-            catalog,
-            database,
             table,
-            ref_name,
             temporal,
             with_options,
             ..
@@ -193,13 +190,13 @@ impl TableRefVisitor {
                 return;
             }
 
-            let catalog = catalog.to_owned().unwrap_or(Identifier {
+            let catalog = table.catalog.to_owned().unwrap_or(Identifier {
                 span: None,
                 name: self.ctx.get_current_catalog(),
                 quote: None,
                 ident_type: IdentifierType::None,
             });
-            let database = database.to_owned().unwrap_or(Identifier {
+            let database = table.database.to_owned().unwrap_or(Identifier {
                 span: None,
                 name: self.ctx.get_current_database(),
                 quote: None,
@@ -208,8 +205,9 @@ impl TableRefVisitor {
 
             let catalog_name = normalize_identifier(&catalog, &self.name_resolution_ctx).name;
             let database_name = normalize_identifier(&database, &self.name_resolution_ctx).name;
-            let table_name = normalize_identifier(table, &self.name_resolution_ctx).name;
-            let ref_name = ref_name
+            let table_name = normalize_identifier(&table.table, &self.name_resolution_ctx).name;
+            let ref_name = table
+                .branch
                 .as_ref()
                 .map(|v| normalize_identifier(v, &self.name_resolution_ctx).name);
 

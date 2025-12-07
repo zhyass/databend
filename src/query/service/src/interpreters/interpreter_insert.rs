@@ -114,7 +114,13 @@ impl Interpreter for InsertInterpreter {
                 .get_table_by_info(table_info)?
         } else {
             self.ctx
-                .get_table(&self.plan.catalog, &self.plan.database, &self.plan.table)
+                .get_table_with_batch(
+                    &self.plan.catalog,
+                    &self.plan.database,
+                    &self.plan.table,
+                    self.plan.branch.as_deref(),
+                    None,
+                )
                 .await?
         };
 

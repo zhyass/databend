@@ -1509,6 +1509,7 @@ impl TableContext for QueryContext {
         catalog_name: &str,
         database_name: &str,
         table_name: &str,
+        branch_name: Option<&str>,
         files: &[StageFileInfo],
         path_prefix: Option<String>,
         max_files: Option<usize>,
@@ -1527,7 +1528,14 @@ impl TableContext for QueryContext {
         let table = catalog
             .get_table(&tenant, database_name, table_name)
             .await?;
+        let table = if let Some(branch) = branch_name {
+            table.with_branch(branch)?
+        } else {
+            table
+        };
         let table_id = table.get_id();
+        // Get branch_id: 0 for main table, non-zero for branches
+        let branch_id = table.get_table_branch().map(|b| b.branch_id()).unwrap_or(0);
 
         let mut result_size: usize = 0;
         let max_files = max_files.unwrap_or(usize::MAX);
@@ -1549,6 +1557,7 @@ impl TableContext for QueryContext {
                 .collect::<Vec<_>>();
             let req = GetTableCopiedFileReq {
                 table_id,
+                branch_id,
                 files: files.clone(),
             };
             let start_request = Instant::now();

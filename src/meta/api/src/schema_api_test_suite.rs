@@ -2839,6 +2839,7 @@ impl SchemaApiTestSuite {
                 });
 
                 let upsert_source_table = UpsertTableCopiedFileReq {
+                    branch_id: 0,
                     file_info,
                     ttl: None,
                     insert_if_not_exists: true,
@@ -2890,6 +2891,7 @@ impl SchemaApiTestSuite {
                 });
 
                 let upsert_source_table = UpsertTableCopiedFileReq {
+                    branch_id: 0,
                     file_info,
                     ttl: None,
                     insert_if_not_exists: true,
@@ -2940,6 +2942,7 @@ impl SchemaApiTestSuite {
                 });
 
                 let upsert_source_table = UpsertTableCopiedFileReq {
+                    branch_id: 0,
                     file_info,
                     ttl: None,
                     insert_if_not_exists: true,
@@ -4290,6 +4293,7 @@ impl SchemaApiTestSuite {
             file_info.insert("file".to_string(), stage_info.clone());
 
             let copied_file_req = UpsertTableCopiedFileReq {
+                branch_id: 0,
                 file_info: file_info.clone(),
                 ttl: Some(std::time::Duration::from_secs(86400)),
                 insert_if_not_exists: true,
@@ -4320,6 +4324,7 @@ impl SchemaApiTestSuite {
 
             let key = TableCopiedFileNameIdent {
                 table_id,
+                branch_id: 0,
                 file: "file".to_string(),
             };
 
@@ -4372,6 +4377,7 @@ impl SchemaApiTestSuite {
         {
             let key = TableCopiedFileNameIdent {
                 table_id,
+                branch_id: 0,
                 file: "file".to_string(),
             };
 
@@ -4423,6 +4429,7 @@ impl SchemaApiTestSuite {
             file_info.insert("file".to_string(), stage_info.clone());
 
             let copied_file_req = UpsertTableCopiedFileReq {
+                branch_id: 0,
                 file_info: file_info.clone(),
                 ttl: Some(std::time::Duration::from_secs(86400)),
                 insert_if_not_exists: true,
@@ -4460,6 +4467,7 @@ impl SchemaApiTestSuite {
 
             let key = TableCopiedFileNameIdent {
                 table_id,
+                branch_id: 0,
                 file: "file".to_string(),
             };
 
@@ -4576,6 +4584,7 @@ impl SchemaApiTestSuite {
         {
             let key = TableCopiedFileNameIdent {
                 table_id,
+                branch_id: 0,
                 file: "file".to_string(),
             };
 
@@ -6227,6 +6236,7 @@ impl SchemaApiTestSuite {
             file_info.insert("file".to_string(), stage_info.clone());
 
             let copied_file_req = UpsertTableCopiedFileReq {
+                branch_id: 0,
                 file_info: file_info.clone(),
                 ttl: Some(std::time::Duration::from_secs(86400)),
                 insert_if_not_exists: true,
@@ -6257,6 +6267,7 @@ impl SchemaApiTestSuite {
 
             let req = GetTableCopiedFileReq {
                 table_id,
+                branch_id: 0,
                 files: vec!["file".to_string()],
             };
 
@@ -6277,6 +6288,7 @@ impl SchemaApiTestSuite {
             file_info.insert("file2".to_string(), stage_info.clone());
 
             let copied_file_req = UpsertTableCopiedFileReq {
+                branch_id: 0,
                 file_info: file_info.clone(),
                 // Make it expire at once.
                 ttl: Some(std::time::Duration::from_secs(0)),
@@ -6308,6 +6320,7 @@ impl SchemaApiTestSuite {
 
             let req = GetTableCopiedFileReq {
                 table_id,
+                branch_id: 0,
                 files: vec!["file2".to_string()],
             };
 
@@ -6339,6 +6352,7 @@ impl SchemaApiTestSuite {
         {
             let req = GetTableCopiedFileReq {
                 table_id,
+                branch_id: 0,
                 files: file_infos.keys().cloned().collect(),
             };
 
@@ -6363,6 +6377,7 @@ impl SchemaApiTestSuite {
 
             let req = GetTableCopiedFileReq {
                 table_id,
+                branch_id: 0,
                 files: file_infos.keys().cloned().collect(),
             };
 
@@ -7791,6 +7806,7 @@ impl SchemaApiTestSuite {
             file_info.insert("file".to_string(), stage_info.clone());
 
             let copied_file_req = UpsertTableCopiedFileReq {
+                branch_id: 0,
                 file_info: file_info.clone(),
                 ttl: Some(std::time::Duration::from_secs(86400)),
                 insert_if_not_exists: true,
@@ -7821,6 +7837,7 @@ impl SchemaApiTestSuite {
 
             let req = GetTableCopiedFileReq {
                 table_id,
+                branch_id: 0,
                 files: vec!["file".to_string()],
             };
 
@@ -7835,6 +7852,7 @@ impl SchemaApiTestSuite {
             // get previous file info
             let req = GetTableCopiedFileReq {
                 table_id,
+                branch_id: 0,
                 files: vec!["file".to_string()],
             };
             let resp = mt.get_table_copied_file_info(req).await?;
@@ -7850,6 +7868,7 @@ impl SchemaApiTestSuite {
             file_info.insert("file_not_exist".to_string(), stage_info.clone());
 
             let copied_file_req = UpsertTableCopiedFileReq {
+                branch_id: 0,
                 file_info: file_info.clone(),
                 ttl: Some(std::time::Duration::from_secs(86400)),
                 insert_if_not_exists: true,
@@ -7883,6 +7902,7 @@ impl SchemaApiTestSuite {
 
             let req = GetTableCopiedFileReq {
                 table_id,
+                branch_id: 0,
                 files: vec!["file".to_string(), "file_not_exist".to_string()],
             };
 
@@ -7906,6 +7926,7 @@ impl SchemaApiTestSuite {
             file_info.insert("file_not_exist".to_string(), stage_info.clone());
 
             let copied_file_req = UpsertTableCopiedFileReq {
+                branch_id: 0,
                 file_info: file_info.clone(),
                 ttl: Some(std::time::Duration::from_secs(86400)),
                 insert_if_not_exists: false,
@@ -7936,6 +7957,7 @@ impl SchemaApiTestSuite {
 
             let req = GetTableCopiedFileReq {
                 table_id,
+                branch_id: 0,
                 files: vec!["file".to_string(), "file_not_exist".to_string()],
             };
 
@@ -8360,6 +8382,7 @@ where MT: SchemaApi + kvapi::KVApi<Error = MetaError>
         }
 
         let copied_file_req = UpsertTableCopiedFileReq {
+            branch_id: 0,
             file_info: file_infos.clone(),
             ttl: Some(std::time::Duration::from_secs(86400)),
             insert_if_not_exists: true,

@@ -30,6 +30,7 @@ use databend_common_expression::Scalar;
 use databend_common_expression::TableSchema;
 use databend_common_meta_app::app_error::AppError;
 use databend_common_meta_app::app_error::UnknownTableId;
+use databend_common_meta_app::schema::SnapshotRef;
 use databend_common_meta_app::schema::SnapshotRefType;
 use databend_common_meta_app::schema::TableIdent;
 use databend_common_meta_app::schema::TableInfo;
@@ -103,6 +104,10 @@ pub trait Table: Sync + Send {
     fn as_any(&self) -> &dyn Any;
 
     fn get_table_info(&self) -> &TableInfo;
+
+    fn get_table_branch(&self) -> Option<&BranchInfo> {
+        None
+    }
 
     fn get_data_source_info(&self) -> DataSourceInfo {
         DataSourceInfo::TableSource(self.get_table_info().clone())
@@ -530,7 +535,25 @@ pub trait TableExt: Table {
             meta,
             ..table_info.clone()
         };
-        catalog.get_table_by_info(&table_info)
+        let table = catalog.get_table_by_info(&table_info)?;
+        if let Some(branch) = self.get_table_branch() {
+            let branch_name = branch.branch_name();
+            let Some(snapshot_ref) = table_info.meta.refs.get(branch_name) else {
+                return Err(ErrorCode::UnknownReference(format!(
+                    "Branch '{}' was dropped on table {}",
+                    branch_name, table_info.desc
+                )));
+            };
+            if snapshot_ref.id != branch.branch_id() {
+                return Err(ErrorCode::UnknownReference(format!(
+                    "Branch '{}' was changed on table {}",
+                    branch_name, table_info.desc
+                )));
+            }
+            table.with_branch(branch_name)
+        } else {
+            Ok(table)
+        }
     }
 
     fn check_mutable(&self) -> Result<()> {
@@ -546,6 +569,26 @@ pub trait TableExt: Table {
     }
 }
 impl<T: ?Sized> TableExt for T where T: Table {}
+
+#[derive(Clone)]
+pub struct BranchInfo {
+    pub name: String,
+    pub info: SnapshotRef,
+}
+
+impl BranchInfo {
+    pub fn branch_name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn branch_id(&self) -> u64 {
+        self.info.id
+    }
+
+    pub fn branch_type(&self) -> SnapshotRefType {
+        self.info.typ.clone()
+    }
+}
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum TimeNavigation {

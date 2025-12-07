@@ -883,6 +883,7 @@ impl TableContext for CtxDelegation {
         _catalog_name: &str,
         _database_name: &str,
         _table_name: &str,
+        _branch_name: Option<&str>,
         _files: &[StageFileInfo],
         _path_prefix: Option<String>,
         _max_files: Option<usize>,

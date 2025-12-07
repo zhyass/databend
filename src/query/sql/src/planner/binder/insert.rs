@@ -19,6 +19,7 @@ use databend_common_ast::ast::Identifier;
 use databend_common_ast::ast::InsertSource;
 use databend_common_ast::ast::InsertStmt;
 use databend_common_ast::ast::Statement;
+use databend_common_ast::ast::TableRef;
 use databend_common_catalog::session_type::SessionType;
 use databend_common_exception::ErrorCode;
 use databend_common_exception::Result;
@@ -102,8 +103,6 @@ impl Binder {
     ) -> Result<Plan> {
         let InsertStmt {
             with,
-            catalog,
-            database,
             table,
             columns,
             source,
@@ -111,13 +110,21 @@ impl Binder {
             ..
         } = stmt;
 
+        let TableRef {
+            catalog,
+            database,
+            table,
+            branch,
+        } = table;
+
         self.init_cte(bind_context, with)?;
 
-        let table_identifier = TableIdentifier::new(self, catalog, database, table, &None, &None);
-        let (catalog_name, database_name, table_name) = (
+        let table_identifier = TableIdentifier::new(self, catalog, database, table, branch, &None);
+        let (catalog_name, database_name, table_name, branch_name) = (
             table_identifier.catalog_name(),
             table_identifier.database_name(),
             table_identifier.table_name(),
+            table_identifier.branch_name(),
         );
 
         let table = self
@@ -162,6 +169,7 @@ impl Binder {
                                 catalog_name,
                                 database_name,
                                 table_name,
+                                branch_name.clone(),
                                 schema,
                                 &values_str,
                                 CopyIntoTableMode::Insert {
@@ -245,6 +253,7 @@ impl Binder {
                                 catalog_name,
                                 database_name,
                                 table_name,
+                                branch_name.clone(),
                                 schema,
                                 value,
                                 stage_info,
@@ -261,9 +270,10 @@ impl Binder {
         };
 
         let plan = Insert {
-            catalog: catalog_name.to_string(),
-            database: database_name.to_string(),
+            catalog: catalog_name,
+            database: database_name,
             table: table_name,
+            branch: branch_name,
             schema,
             overwrite: *overwrite,
             source: input_source?,
