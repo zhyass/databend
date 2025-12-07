@@ -310,6 +310,7 @@ pub trait TableContext: Send + Sync {
         catalog_name: &str,
         database_name: &str,
         table_name: &str,
+        branch_name: Option<&str>,
         files: &[StageFileInfo],
         path_prefix: Option<String>,
         max_files: Option<usize>,
@@ -421,6 +422,7 @@ pub trait TableContext: Send + Sync {
         catalog_name: &str,
         db_name: &str,
         tbl_name: &str,
+        branch_name: Option<&str>,
         lock_opt: &LockTableOption,
     ) -> Result<Option<Arc<LockGuard>>>;
 

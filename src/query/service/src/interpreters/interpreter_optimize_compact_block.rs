@@ -71,6 +71,7 @@ impl Interpreter for OptimizeCompactBlockInterpreter {
             catalog,
             database,
             table,
+            branch,
             limit,
         } = self.s_expr.plan().clone().try_into()?;
 
@@ -78,7 +79,13 @@ impl Interpreter for OptimizeCompactBlockInterpreter {
         let lock_guard = self
             .ctx
             .clone()
-            .acquire_table_lock(&catalog, &database, &table, &self.lock_opt)
+            .acquire_table_lock(
+                &catalog,
+                &database,
+                &table,
+                branch.as_deref(),
+                &self.lock_opt,
+            )
             .await?;
 
         let mut build_res = PipelineBuildResult::create();

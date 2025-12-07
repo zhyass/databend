@@ -430,7 +430,7 @@ pub(crate) async fn dump_tables(
                     &db_name,
                     table.name(),
                     db_id,
-                    table.get_id(),
+                    table.get_table_id(),
                 ),
                 None => true, // No checker, all tables are visible
             };

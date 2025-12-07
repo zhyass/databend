@@ -496,7 +496,7 @@ where TablesTable<WITH_HISTORY, WITHOUT_VIEW>: HistoryAware
                         match ctl.get_table(&tenant, db.name(), table_name).await {
                             Ok(t) => {
                                 let db_id = db.get_db_info().database_id.db_id;
-                                let table_id = t.get_id();
+                                let table_id = t.get_table_id();
                                 if let Some(visibility_checker) = &visibility_checker {
                                     let role = user_api
                                         .role_api(&tenant)
@@ -512,7 +512,7 @@ where TablesTable<WITH_HISTORY, WITHOUT_VIEW>: HistoryAware
                                         db.name(),
                                         table_name,
                                         db_id,
-                                        t.get_id(),
+                                        t.get_table_id(),
                                     ) {
                                         push_table_info(
                                             &mut catalogs,
@@ -762,7 +762,7 @@ where TablesTable<WITH_HISTORY, WITHOUT_VIEW>: HistoryAware
                     };
 
                     for table in tables {
-                        let table_id = table.get_id();
+                        let table_id = table.get_table_id();
                         let check_table_visibility = visibility_checker
                             .as_ref()
                             .map(|c| {

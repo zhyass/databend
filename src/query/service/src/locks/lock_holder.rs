@@ -69,7 +69,7 @@ impl LockHolder {
 
         let lock_key = req.lock_key.clone();
         let lock_type = lock_key.lock_type().to_string();
-        let table_id = lock_key.get_table_id();
+        let table_target_id = lock_key.get_target_id();
         let tenant = lock_key.get_tenant();
 
         let revision = self.start(catalog.clone(), req).await?;
@@ -119,7 +119,7 @@ impl LockHolder {
                 )));
             }
 
-            let watch_delete_ident = TableLockIdent::new(tenant, table_id, prev_revision);
+            let watch_delete_ident = TableLockIdent::new(tenant, table_target_id, prev_revision);
 
             // Get the previous revision, watch the delete event.
             let req = WatchRequest::new(watch_delete_ident.to_string_key(), None)
@@ -157,8 +157,8 @@ impl LockHolder {
         }
 
         log::info!(
-            "Acquired table lock successfully(table_id: {}, lock_type: {}, revision: {}, elapsed: {:?})",
-            table_id,
+            "Acquired table lock successfully(table_target_id: {}, lock_type: {}, revision: {}, elapsed: {:?})",
+            table_target_id,
             lock_type,
             revision,
             start.elapsed()
@@ -259,9 +259,9 @@ impl LockHolder {
                 Err(e) => match backoff.next_backoff() {
                     Some(duration) => {
                         log::debug!(
-                            "failed to extend the lock, tx will be retried {} ms later. table id {}, revision {}",
+                            "failed to extend the lock, tx will be retried {} ms later. table ident {}, revision {}",
                             duration.as_millis(),
-                            req.lock_key.get_table_id(),
+                            req.lock_key.get_target_id(),
                             req.revision,
                         );
                         let sleep_gap = Box::pin(sleep(duration));
@@ -310,7 +310,7 @@ impl LockHolder {
                         log::debug!(
                             "failed to delete the lock, tx will be retried {} ms later. table id {}, revision {}",
                             duration.as_millis(),
-                            req.lock_key.get_table_id(),
+                            req.lock_key.get_target_id(),
                             req.revision,
                         );
                         sleep(duration).await;

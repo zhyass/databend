@@ -15,6 +15,7 @@
 use std::any::Any;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::fmt::format;
 use std::sync::Arc;
 
 use chrono::DateTime;
@@ -30,6 +31,7 @@ use databend_common_expression::Scalar;
 use databend_common_expression::TableSchema;
 use databend_common_meta_app::app_error::AppError;
 use databend_common_meta_app::app_error::UnknownTableId;
+use databend_common_meta_app::schema::BranchInfo;
 use databend_common_meta_app::schema::SnapshotRefType;
 use databend_common_meta_app::schema::TableIdent;
 use databend_common_meta_app::schema::TableInfo;
@@ -92,8 +94,21 @@ pub trait Table: Sync + Send {
         self.get_table_info().field_comments()
     }
 
-    fn get_id(&self) -> MetaId {
+    /// This method retrieves the `table_id` from the table's metadata.
+    /// If the object is a branch, it returns the ID of the parent table that the branch belongs to.
+    fn get_table_id(&self) -> MetaId {
         self.get_table_info().ident.table_id
+    }
+
+    /// Returns the effective target ID for this table reference.
+    ///
+    /// - If this is a branch, returns the branch ID.
+    /// - Otherwise, returns the physical table ID.
+    ///
+    /// This ID uniquely identifies the concrete target of an operation.
+    fn get_target_id(&self) -> u64 {
+        self.get_table_branch()
+            .map_or(self.get_table_id(), |v| v.branch_id())
     }
 
     fn distribution_level(&self) -> DistributionLevel {
@@ -104,8 +119,17 @@ pub trait Table: Sync + Send {
 
     fn get_table_info(&self) -> &TableInfo;
 
+    fn get_table_branch(&self) -> Option<&BranchInfo> {
+        None
+    }
+
     fn get_data_source_info(&self) -> DataSourceInfo {
-        DataSourceInfo::TableSource(self.get_table_info().clone())
+        let table_info = self.get_table_info().clone();
+        let branch = self.get_table_branch().map(|b| b.name.clone());
+        DataSourceInfo::TableSource(ResolvedTableInfo {
+            inner: table_info,
+            branch,
+        })
     }
 
     /// get_data_metrics will get data metrics from table.
@@ -530,15 +554,37 @@ pub trait TableExt: Table {
             meta,
             ..table_info.clone()
         };
-        catalog.get_table_by_info(&table_info)
+        let table = catalog.get_table_by_info(&table_info)?;
+        if let Some(branch) = self.get_table_branch() {
+            let branch_name = branch.branch_name();
+            let Some(snapshot_ref) = table_info.meta.refs.get(branch_name) else {
+                return Err(ErrorCode::UnknownReference(format!(
+                    "Branch '{}' was dropped on table {}",
+                    branch_name, table_info.desc
+                )));
+            };
+            if snapshot_ref.id != branch.branch_id() {
+                return Err(ErrorCode::UnknownReference(format!(
+                    "Branch '{}' was changed on table {}",
+                    branch_name, table_info.desc
+                )));
+            }
+            table.with_branch(branch_name)
+        } else {
+            Ok(table)
+        }
     }
 
     fn check_mutable(&self) -> Result<()> {
         if self.is_read_only() {
             let table_info = self.get_table_info();
+            let branch_info = self
+                .get_table_branch()
+                .map(|v| format!(" (tag: {})", v.branch_name()))
+                .unwrap_or_default();
             Err(ErrorCode::InvalidOperation(format!(
-                "Modification not permitted: Table '{}' is READ ONLY, preventing any changes or updates.",
-                table_info.name
+                "Modification not permitted: Table '{}'{} is READ ONLY, preventing any changes or updates.",
+                table_info.name, branch_info
             )))
         } else {
             Ok(())
@@ -728,6 +774,26 @@ pub enum DistributionLevel {
     Local,
     Cluster,
     Warehouse,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct ResolvedTableInfo {
+    pub inner: TableInfo,
+    pub branch: Option<String>,
+}
+
+impl ResolvedTableInfo {
+    pub fn new(inner: &TableInfo) -> Self {
+        ResolvedTableInfo {
+            inner: inner.clone(),
+            branch: None,
+        }
+    }
+
+    pub fn with_branch(mut self, branch: Option<String>) -> Self {
+        self.branch = branch;
+        self
+    }
 }
 
 pub fn is_temp_table_by_table_info(table_info: &TableInfo) -> bool {

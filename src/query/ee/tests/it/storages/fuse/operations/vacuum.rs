@@ -587,7 +587,7 @@ async fn test_vacuum_dropped_table_clean_autoincrement() -> Result<()> {
         .get_table(&tenant, db_name, tbl_name)
         .await?;
 
-    let auto_increment_key_0 = AutoIncrementKey::new(table.get_id(), 0);
+    let auto_increment_key_0 = AutoIncrementKey::new(table.get_table_id(), 0);
     let sequence_storage_ident_0 =
         AutoIncrementStorageIdent::new_generic(&tenant, auto_increment_key_0);
 
@@ -605,10 +605,10 @@ async fn test_vacuum_dropped_table_clean_autoincrement() -> Result<()> {
         .get_table(&tenant, db_name, tbl_name)
         .await?;
 
-    let auto_increment_key_1 = AutoIncrementKey::new(table.get_id(), 0);
+    let auto_increment_key_1 = AutoIncrementKey::new(table.get_table_id(), 0);
     let sequence_storage_ident_1 =
         AutoIncrementStorageIdent::new_generic(&tenant, auto_increment_key_1);
-    let auto_increment_key_2 = AutoIncrementKey::new(table.get_id(), 1);
+    let auto_increment_key_2 = AutoIncrementKey::new(table.get_table_id(), 1);
     let sequence_storage_ident_2 =
         AutoIncrementStorageIdent::new_generic(&tenant, auto_increment_key_2);
 
@@ -691,7 +691,7 @@ async fn test_vacuum_dropped_table_clean_ownership() -> Result<()> {
     let table_ownership = OwnershipObject::Table {
         catalog_name: catalog_name.clone(),
         db_id,
-        table_id: table.get_id(),
+        table_id: table.get_table_id(),
     };
     let table_ownership_key = TenantOwnershipObjectIdent::new(tenant.clone(), table_ownership);
     let v = meta.get_pb(&table_ownership_key).await?;
@@ -718,7 +718,7 @@ async fn test_vacuum_dropped_table_clean_ownership() -> Result<()> {
     let table_ownership = OwnershipObject::Table {
         catalog_name,
         db_id: db.get_db_info().database_id.db_id,
-        table_id: table.get_id(),
+        table_id: table.get_table_id(),
     };
 
     let table_ownership_key = TenantOwnershipObjectIdent::new(tenant, table_ownership);

@@ -168,7 +168,11 @@ impl Binder {
                 && !matches!(table.engine(), "VIEW" | "STREAM")
             {
                 let indexes = self
-                    .resolve_table_indexes(&self.ctx.get_tenant(), catalog.as_str(), table.get_id())
+                    .resolve_table_indexes(
+                        &self.ctx.get_tenant(),
+                        catalog.as_str(),
+                        table.get_table_id(),
+                    )
                     .await?;
 
                 let mut s_exprs = Vec::with_capacity(indexes.len());
@@ -273,7 +277,7 @@ impl Binder {
             )));
         }
 
-        let table_id = table.get_id();
+        let table_id = table.get_table_id();
         Self::rewrite_query_with_database(&mut original_query, table_entry.database());
         Self::rewrite_query_with_database(&mut query, table_entry.database());
 
@@ -392,7 +396,7 @@ impl Binder {
 
         let table_entry = &tables[0];
         let table = table_entry.table();
-        debug_assert_eq!(index_meta.table_id, table.get_id());
+        debug_assert_eq!(index_meta.table_id, table.get_table_id());
 
         let plan = RefreshIndexPlan {
             index_id,
@@ -410,9 +414,9 @@ impl Binder {
 
     fn rewrite_query_with_database(query: &mut Query, name: &str) {
         if let SetExpr::Select(stmt) = &mut query.body {
-            if let TableReference::Table { database, .. } = &mut stmt.from[0] {
-                if database.is_none() {
-                    *database = Some(Identifier::from_name(query.span, name));
+            if let TableReference::Table { table, .. } = &mut stmt.from[0] {
+                if table.database.is_none() {
+                    table.database = Some(Identifier::from_name(query.span, name));
                 }
             }
         }
@@ -461,7 +465,7 @@ impl Binder {
             )));
         }
         let table_schema = table.schema();
-        let table_id = table.get_id();
+        let table_id = table.get_table_id();
         let index_name = self.normalize_object_identifier(index_name);
 
         let (column_ids, index_options, meta_index_type) = match index_type {
@@ -856,7 +860,7 @@ impl Binder {
                 table.engine()
             )));
         }
-        let table_id = table.get_id();
+        let table_id = table.get_table_id();
         let index_name = self.normalize_object_identifier(index_name);
 
         let plan = DropTableIndexPlan {

@@ -80,6 +80,8 @@ use databend_common_meta_app::schema::ListSequencesReq;
 use databend_common_meta_app::schema::ListTableCopiedFileReply;
 use databend_common_meta_app::schema::LockInfo;
 use databend_common_meta_app::schema::LockMeta;
+use databend_common_meta_app::schema::RemoveTableCopiedFileReply;
+use databend_common_meta_app::schema::RemoveTableCopiedFileReq;
 use databend_common_meta_app::schema::RenameDatabaseReply;
 use databend_common_meta_app::schema::RenameDatabaseReq;
 use databend_common_meta_app::schema::RenameDictionaryReq;
@@ -93,8 +95,6 @@ use databend_common_meta_app::schema::SwapTableReply;
 use databend_common_meta_app::schema::SwapTableReq;
 use databend_common_meta_app::schema::TableInfo;
 use databend_common_meta_app::schema::TableMeta;
-use databend_common_meta_app::schema::TruncateTableReply;
-use databend_common_meta_app::schema::TruncateTableReq;
 use databend_common_meta_app::schema::UndropDatabaseReply;
 use databend_common_meta_app::schema::UndropDatabaseReq;
 use databend_common_meta_app::schema::UndropTableByIdReq;
@@ -573,19 +573,21 @@ impl Catalog for SessionCatalog {
         db_name: &str,
         req: GetTableCopiedFileReq,
     ) -> Result<GetTableCopiedFileReply> {
-        let table_id = req.table_id;
+        let table_id = req.ref_ident.table_id;
         let mut reply = if is_temp_table_id(table_id) {
             self.temp_tbl_mgr
                 .lock()
                 .get_table_copied_file_info(req.clone())?
         } else {
             self.inner
-                .get_table_copied_file_info(tenant, db_name, req)
+                .get_table_copied_file_info(tenant, db_name, req.clone())
                 .await?
         };
-        reply
-            .file_info
-            .extend(self.txn_mgr.lock().get_table_copied_file_info(table_id));
+        reply.file_info.extend(
+            self.txn_mgr
+                .lock()
+                .get_table_copied_file_info(&req.ref_ident),
+        );
         Ok(reply)
     }
 
@@ -593,64 +595,68 @@ impl Catalog for SessionCatalog {
         &self,
         tenant: &Tenant,
         db_name: &str,
-        table_id: u64,
+        table_target_id: u64,
     ) -> Result<ListTableCopiedFileReply> {
-        let reply = if is_temp_table_id(table_id) {
+        let reply = if is_temp_table_id(table_target_id) {
             self.temp_tbl_mgr
                 .lock()
-                .list_table_copied_file_info(table_id)?
+                .list_table_copied_file_info(table_target_id)?
         } else {
             self.inner
-                .list_table_copied_file_info(tenant, db_name, table_id)
+                .list_table_copied_file_info(tenant, db_name, table_target_id)
                 .await?
         };
         Ok(reply)
     }
 
-    async fn truncate_table(
+    async fn remove_table_copied_file_info(
         &self,
         table_info: &TableInfo,
-        req: TruncateTableReq,
-    ) -> Result<TruncateTableReply> {
-        if is_temp_table_id(req.table_id) {
-            self.temp_tbl_mgr.lock().truncate_table(req.table_id)
+        req: RemoveTableCopiedFileReq,
+    ) -> Result<RemoveTableCopiedFileReply> {
+        if is_temp_table_id(req.table_ref_id.table_id) {
+            self.temp_tbl_mgr
+                .lock()
+                .remove_table_copied_file_info(req.table_ref_id.table_id)
         } else {
-            self.inner.truncate_table(table_info, req).await
+            self.inner
+                .remove_table_copied_file_info(table_info, req)
+                .await
         }
     }
 
     async fn list_lock_revisions(&self, req: ListLockRevReq) -> Result<Vec<(u64, LockMeta)>> {
-        if is_temp_table_id(req.lock_key.get_table_id()) {
+        if is_temp_table_id(req.lock_key.get_target_id()) {
             return Ok(vec![]);
         }
         self.inner.list_lock_revisions(req).await
     }
 
     async fn create_lock_revision(&self, req: CreateLockRevReq) -> Result<CreateLockRevReply> {
-        if is_temp_table_id(req.lock_key.get_table_id()) {
+        if is_temp_table_id(req.lock_key.get_target_id()) {
             return Err(ErrorCode::StorageUnsupported(format!(
                 "CreateLockRevision: table id {} is a temporary table id",
-                req.lock_key.get_table_id()
+                req.lock_key.get_target_id()
             )));
         }
         self.inner.create_lock_revision(req).await
     }
 
     async fn extend_lock_revision(&self, req: ExtendLockRevReq) -> Result<()> {
-        if is_temp_table_id(req.lock_key.get_table_id()) {
+        if is_temp_table_id(req.lock_key.get_target_id()) {
             return Err(ErrorCode::StorageUnsupported(format!(
                 "ExtendLockRevision: table id {} is a temporary table id",
-                req.lock_key.get_table_id()
+                req.lock_key.get_target_id()
             )));
         }
         self.inner.extend_lock_revision(req).await
     }
 
     async fn delete_lock_revision(&self, req: DeleteLockRevReq) -> Result<()> {
-        if is_temp_table_id(req.lock_key.get_table_id()) {
+        if is_temp_table_id(req.lock_key.get_target_id()) {
             return Err(ErrorCode::StorageUnsupported(format!(
                 "DeleteLockRevision: table id {} is a temporary table id",
-                req.lock_key.get_table_id()
+                req.lock_key.get_target_id()
             )));
         }
         self.inner.delete_lock_revision(req).await

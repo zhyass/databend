@@ -78,6 +78,8 @@ use databend_common_meta_app::schema::ListSequencesReq;
 use databend_common_meta_app::schema::ListTableCopiedFileReply;
 use databend_common_meta_app::schema::LockInfo;
 use databend_common_meta_app::schema::LockMeta;
+use databend_common_meta_app::schema::RemoveTableCopiedFileReply;
+use databend_common_meta_app::schema::RemoveTableCopiedFileReq;
 use databend_common_meta_app::schema::RenameDatabaseReply;
 use databend_common_meta_app::schema::RenameDatabaseReq;
 use databend_common_meta_app::schema::RenameDictionaryReq;
@@ -91,8 +93,6 @@ use databend_common_meta_app::schema::SwapTableReply;
 use databend_common_meta_app::schema::SwapTableReq;
 use databend_common_meta_app::schema::TableInfo;
 use databend_common_meta_app::schema::TableMeta;
-use databend_common_meta_app::schema::TruncateTableReply;
-use databend_common_meta_app::schema::TruncateTableReq;
 use databend_common_meta_app::schema::UndropDatabaseReply;
 use databend_common_meta_app::schema::UndropDatabaseReq;
 use databend_common_meta_app::schema::UndropTableByIdReq;
@@ -296,6 +296,22 @@ pub trait Catalog: DynClone + Send + Sync + Debug {
         table_name: &str,
     ) -> Result<Arc<dyn Table>>;
 
+    #[async_backtrace::framed]
+    async fn get_table_with_branch(
+        &self,
+        tenant: &Tenant,
+        db_name: &str,
+        table_name: &str,
+        branch_name: Option<&str>,
+    ) -> Result<Arc<dyn Table>> {
+        let table = self.get_table(tenant, db_name, table_name).await?;
+        if let Some(branch) = branch_name {
+            table.with_branch(branch)
+        } else {
+            Ok(table)
+        }
+    }
+
     // Get one table identified as dropped by db and table name.
     async fn get_table_history(
         &self,
@@ -496,7 +512,7 @@ pub trait Catalog: DynClone + Send + Sync + Debug {
         &self,
         _tenant: &Tenant,
         _db_name: &str,
-        _table_id: u64,
+        _ref_id: u64,
     ) -> Result<ListTableCopiedFileReply> {
         Err(ErrorCode::Unimplemented(format!(
             "'list_table_copied_file_info' not implemented for catalog {}",
@@ -504,11 +520,11 @@ pub trait Catalog: DynClone + Send + Sync + Debug {
         )))
     }
 
-    async fn truncate_table(
+    async fn remove_table_copied_file_info(
         &self,
         table_info: &TableInfo,
-        req: TruncateTableReq,
-    ) -> Result<TruncateTableReply>;
+        req: RemoveTableCopiedFileReq,
+    ) -> Result<RemoveTableCopiedFileReply>;
 
     async fn list_lock_revisions(&self, req: ListLockRevReq) -> Result<Vec<(u64, LockMeta)>>;
 

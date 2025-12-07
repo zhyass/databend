@@ -125,6 +125,32 @@ impl Metadata {
             .map(|table| table.index)
     }
 
+    pub fn get_table_index_with_branch(
+        &self,
+        database_name: Option<&str>,
+        table_name: &str,
+        branch_name: Option<&str>,
+    ) -> Option<IndexType> {
+        self.tables
+            .iter()
+            .rev()
+            .find(|table| {
+                if table.alias_name.as_deref() == Some(table_name) {
+                    return true;
+                }
+
+                if table.branch.as_deref() != branch_name {
+                    return false;
+                }
+
+                match database_name {
+                    Some(db) => table.database == db && table.name == table_name,
+                    None => table.name == table_name,
+                }
+            })
+            .map(|table| table.index)
+    }
+
     pub fn column(&self, index: IndexType) -> &ColumnEntry {
         self.columns
             .get(index)
@@ -639,6 +665,16 @@ impl TableEntry {
 
     pub fn update_table_index(&mut self, table_index: IndexType) {
         self.index = table_index;
+    }
+
+    pub fn qualified_name(&self) -> String {
+        match &self.branch {
+            None => format!("{}.{}.{}", self.catalog, self.database, self.name),
+            Some(branch) => format!(
+                "{}.{}.{}/{}",
+                self.catalog, self.database, self.name, branch
+            ),
+        }
     }
 }
 

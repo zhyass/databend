@@ -16,12 +16,12 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use databend_common_catalog::table::ResolvedTableInfo;
 use databend_common_exception::Result;
 use databend_common_expression::DataSchema;
 use databend_common_expression::DataSchemaRef;
 use databend_common_expression::FieldIndex;
 use databend_common_expression::RemoteExpr;
-use databend_common_meta_app::schema::TableInfo;
 use databend_common_pipeline::core::Pipe;
 use databend_common_sql::binder::MutationStrategy;
 use databend_common_sql::executor::physical_plans::MatchExpr;
@@ -39,7 +39,7 @@ use crate::pipelines::PipelineBuilder;
 pub struct MutationManipulate {
     pub meta: PhysicalPlanMeta,
     pub input: PhysicalPlan,
-    pub table_info: TableInfo,
+    pub table_info: ResolvedTableInfo,
     // (DataSchemaRef, Option<RemoteExpr>, Vec<RemoteExpr>,Vec<usize>) => (source_schema, condition, value_exprs)
     pub unmatched: Vec<(DataSchemaRef, Option<RemoteExpr>, Vec<RemoteExpr>)>,
     // the first option stands for the condition

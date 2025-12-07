@@ -131,15 +131,17 @@ impl PrivilegeAccess {
                     self.ctx
                         .get_table(catalog_name, db_name, table_name)
                         .await?
-                        .get_id()
+                        .get_table_id()
                 } else {
                     match self.ctx.get_table(catalog_name, db_name, table_name).await {
-                        Ok(table) => table.get_id(),
+                        Ok(table) => table.get_table_id(),
                         // attach table issue_16121 xx, then vacuum drop table from issue_16121 , then drop table
                         // should disable catalog
                         Err(_) => {
                             let cat = catalog.disable_table_info_refresh()?;
-                            cat.get_table(&tenant, db_name, table_name).await?.get_id()
+                            cat.get_table(&tenant, db_name, table_name)
+                                .await?
+                                .get_table_id()
                         }
                     }
                 };
@@ -1075,20 +1077,20 @@ impl PrivilegeAccess {
                 self.ctx
                     .get_table(cat.name().as_str(), database_name, table_name)
                     .await?
-                    .get_id()
+                    .get_table_id()
             } else {
                 match self
                     .ctx
                     .get_table(cat.name().as_str(), database_name, table_name)
                     .await
                 {
-                    Ok(table) => table.get_id(),
+                    Ok(table) => table.get_table_id(),
                     // attach table issue_16121 xx, then vacuum drop table from issue_16121 , then drop table
                     // should disable catalog
                     Err(_) => cat
                         .get_table(tenant, database_name, table_name)
                         .await?
-                        .get_id(),
+                        .get_table_id(),
                 }
             };
             return Ok(ObjectId::Table(db_id, table_id));
@@ -1265,7 +1267,7 @@ impl AccessChecker for PrivilegeAccess {
                             DataSourceInfo::ORCSource(stage_info) => {
                                 self.validate_stage_access(&stage_info.stage_table_info.stage_info, UserPrivilegeType::Read).await?;
                             }
-                            DataSourceInfo::TableSource(_) | DataSourceInfo::ResultScanSource(_) => {}
+                            DataSourceInfo::TableSource { .. } | DataSourceInfo::ResultScanSource(_) => {}
                         }
                     }
                     if table.is_source_of_view() || table.table().is_temp() {

@@ -147,16 +147,19 @@ impl Binder {
         location: &FileLocation,
         is_transform: bool,
     ) -> Result<CopyIntoTablePlan> {
-        let (catalog_name, database_name, table_name) = self.normalize_object_identifier_triple(
-            &stmt.dst.catalog,
-            &stmt.dst.database,
-            &stmt.dst.table,
-        );
+        let (catalog_name, database_name, table_name, branch_name) =
+            self.normalize_table_ref(&stmt.dst);
         let catalog = self.ctx.get_catalog(&catalog_name).await?;
         let catalog_info = catalog.info();
         let table = self
             .ctx
-            .get_table(&catalog_name, &database_name, &table_name)
+            .get_table_with_batch(
+                &catalog_name,
+                &database_name,
+                &table_name,
+                branch_name.as_deref(),
+                None,
+            )
             .await?;
         let dedup_full_path = table
             .get_table_info()
@@ -218,6 +221,7 @@ impl Binder {
             catalog_info,
             database_name,
             table_name,
+            branch: branch_name,
             validation_mode,
             is_transform,
             dedup_full_path,
@@ -360,6 +364,7 @@ impl Binder {
         catalog_name: String,
         database_name: String,
         table_name: String,
+        branch_name: Option<String>,
         required_values_schema: TableSchemaRef,
         values_str: &str,
         write_mode: CopyIntoTableMode,
@@ -376,6 +381,7 @@ impl Binder {
             catalog_name,
             database_name,
             table_name,
+            branch_name,
             required_values_schema,
             expr_or_placeholders,
             stage_info,
@@ -394,6 +400,7 @@ impl Binder {
         catalog_name: String,
         database_name: String,
         table_name: String,
+        branch: Option<String>,
         required_values_schema: TableSchemaRef,
         expr_or_placeholders: Option<Vec<Expr>>,
         stage_info: StageInfo,
@@ -430,6 +437,7 @@ impl Binder {
             catalog_info,
             database_name,
             table_name,
+            branch,
             no_file_to_copy: false,
             from_attachment: true,
             required_source_schema: Arc::new(DataSchema::from(&required_source_schema)),

@@ -54,13 +54,13 @@ impl Display for LockType {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LockKey {
     /// table-level lock.
-    Table { tenant: Tenant, table_id: u64 },
+    Table { tenant: Tenant, id: u64 },
 }
 
 impl LockKey {
-    pub fn get_table_id(&self) -> u64 {
+    pub fn get_target_id(&self) -> u64 {
         match self {
-            LockKey::Table { table_id, .. } => *table_id,
+            LockKey::Table { id, .. } => *id,
         }
     }
 
@@ -84,22 +84,22 @@ impl LockKey {
 
     pub fn gen_prefix(&self) -> DirName<TableLockIdent> {
         match self {
-            LockKey::Table { tenant, table_id } => {
-                DirName::new(TableLockIdent::new(tenant.clone(), *table_id, 0))
+            LockKey::Table { tenant, id } => {
+                DirName::new(TableLockIdent::new(tenant.clone(), *id, 0))
             }
         }
     }
 
     pub fn gen_key(&self, revision: u64) -> TableLockIdent {
         match self {
-            LockKey::Table { tenant, table_id } => TableLockIdent::new(tenant, *table_id, revision),
+            LockKey::Table { tenant, id } => TableLockIdent::new(tenant, *id, revision),
         }
     }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct LockInfo {
-    pub table_id: u64,
+    pub id: u64,
     pub revision: u64,
     pub meta: LockMeta,
 }

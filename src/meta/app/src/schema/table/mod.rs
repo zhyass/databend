@@ -236,6 +236,26 @@ impl Display for SnapshotRefType {
     }
 }
 
+#[derive(Clone)]
+pub struct BranchInfo {
+    pub name: String,
+    pub info: SnapshotRef,
+}
+
+impl BranchInfo {
+    pub fn branch_name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn branch_id(&self) -> u64 {
+        self.info.id
+    }
+
+    pub fn branch_type(&self) -> SnapshotRefType {
+        self.info.typ.clone()
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct SecurityPolicyColumnMap {
     pub policy_id: u64,
@@ -814,7 +834,8 @@ pub struct UpdateTableMetaReq {
     pub table_id: u64,
     pub seq: MatchSeq,
     pub new_table_meta: TableMeta,
-    pub base_snapshot_location: Option<String>,
+    // base snapshot location with branch id
+    pub base_snapshot_locations: HashMap<Option<u64>, Option<String>>,
     /// Optional optimistic LVT check.
     pub lvt_check: Option<TableLvtCheck>,
 }
@@ -836,7 +857,7 @@ pub struct UpdateTempTableReq {
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct UpdateMultiTableMetaReq {
     pub update_table_metas: Vec<(UpdateTableMetaReq, TableInfo)>,
-    pub copied_files: Vec<(u64, UpsertTableCopiedFileReq)>,
+    pub copied_files: Vec<(TableRefId, UpsertTableCopiedFileReq)>,
     pub update_stream_metas: Vec<UpdateStreamMetaReq>,
     pub deduplicated_labels: Vec<String>,
     pub update_temp_tables: Vec<UpdateTempTableReq>,
@@ -1156,7 +1177,8 @@ impl Display for TableIdToName {
 
 #[derive(Clone, Debug, Eq, PartialEq, Default)]
 pub struct TableCopiedFileNameIdent {
-    pub table_id: u64,
+    /// main: table_id, branch: branch id
+    pub id: u64,
     pub file: String,
 }
 
@@ -1164,8 +1186,8 @@ impl fmt::Display for TableCopiedFileNameIdent {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "TableCopiedFileNameIdent{{table_id:{}, file:{}}}",
-            self.table_id, self.file
+            "TableCopiedFileNameIdent{{id:{},file:{}}}",
+            self.id, self.file
         )
     }
 }
@@ -1179,7 +1201,7 @@ pub struct TableCopiedFileInfo {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GetTableCopiedFileReq {
-    pub table_id: u64,
+    pub ref_ident: TableRefId,
     pub files: Vec<String>,
 }
 
@@ -1189,6 +1211,37 @@ pub struct GetTableCopiedFileReply {
 }
 
 pub type ListTableCopiedFileReply = GetTableCopiedFileReply;
+
+/// Identifies a table reference.
+///
+/// A table reference can be either:
+/// - the main branch (`branch_id = None`)
+/// - a derived branch (`branch_id = Some(_)`)
+///
+/// `table_id` always refers to the physical table.
+/// `ident_id()` uniquely identifies the referenced table view:
+/// - main branch: `table_id`
+/// - branch:      `branch_id`
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct TableRefId {
+    /// Physical table identifier.
+    ///
+    /// This id is shared by the main branch and all derived branches.
+    pub table_id: u64,
+
+    /// Branch identifier.
+    ///
+    /// - `None` means the main branch
+    /// - `Some(id)` means a non-main branch
+    pub branch_id: Option<u64>, // None = main branch
+}
+
+impl TableRefId {
+    /// Returns the effective reference id of this table view.
+    pub fn ident_id(&self) -> u64 {
+        self.branch_id.unwrap_or(self.table_id)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UpsertTableCopiedFileReq {
@@ -1203,8 +1256,8 @@ pub struct UpsertTableCopiedFileReq {
 pub struct UpsertTableCopiedFileReply {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TruncateTableReq {
-    pub table_id: u64,
+pub struct RemoveTableCopiedFileReq {
+    pub table_ref_id: TableRefId,
     /// Specify the max number copied file to delete in every sub-transaction.
     ///
     /// By default it use `DEFAULT_MGET_SIZE=256`
@@ -1212,7 +1265,7 @@ pub struct TruncateTableReq {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TruncateTableReply {}
+pub struct RemoveTableCopiedFileReply {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EmptyProto {}
@@ -1332,13 +1385,13 @@ mod kvapi_key_impl {
             // TODO: file is not escaped!!!
             //       There already are non escaped data stored on disk.
             //       We can not change it anymore.
-            b.push_u64(self.table_id).push_raw(&self.file)
+            b.push_u64(self.id).push_raw(&self.file)
         }
 
         fn decode_key(p: &mut KeyParser) -> Result<Self, kvapi::KeyError> {
-            let table_id = p.next_u64()?;
+            let id = p.next_u64()?;
             let file = p.tail_raw()?.to_string();
-            Ok(Self { table_id, file })
+            Ok(Self { id, file })
         }
     }
 
@@ -1349,7 +1402,7 @@ mod kvapi_key_impl {
         type ValueType = TableCopiedFileInfo;
 
         fn parent(&self) -> Option<String> {
-            Some(TableId::new(self.table_id).to_string_key())
+            Some(TableId::new(self.id).to_string_key())
         }
     }
 
@@ -1400,10 +1453,10 @@ mod tests {
 
     #[test]
     fn test_table_copied_file_name_ident_conversion() -> Result<(), kvapi::KeyError> {
-        // test with a key has a file has multi path
+        // test with a key has a file has multi path (main table: branch_id = 0)
         {
             let name = TableCopiedFileNameIdent {
-                table_id: 2,
+                id: 2,
                 file: "/path/to/file".to_owned(),
             };
 
@@ -1413,7 +1466,7 @@ mod tests {
                 format!(
                     "{}/{}/{}",
                     TableCopiedFileNameIdent::PREFIX,
-                    name.table_id,
+                    name.id,
                     name.file,
                 )
             );
@@ -1438,10 +1491,11 @@ mod tests {
             let key = format!("{}/{}/{}", TableCopiedFileNameIdent::PREFIX, 2, "");
             let res = TableCopiedFileNameIdent::from_str_key(&key)?;
             assert_eq!(res, TableCopiedFileNameIdent {
-                table_id: 2,
+                id: 2,
                 file: "".to_string(),
             });
         }
+
         Ok(())
     }
 }

@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use databend_common_ast::ast::CopyIntoTableOptions;
 use databend_common_catalog::lock::LockTableOption;
+use databend_common_catalog::table::ResolvedTableInfo;
 use databend_common_catalog::table::TableExt;
 use databend_common_catalog::table_context::TableContext;
 use databend_common_exception::ErrorCode;
@@ -119,7 +120,7 @@ impl Interpreter for ReplaceInterpreter {
         }
 
         // Execute hook.
-        {
+        if self.plan.branch.is_none() {
             let hook_operator = HookOperator::create(
                 self.ctx.clone(),
                 self.plan.catalog.clone(),
@@ -145,7 +146,13 @@ impl ReplaceInterpreter {
         let plan = &self.plan;
         let table = self
             .ctx
-            .get_table(&plan.catalog, &plan.database, &plan.table)
+            .get_table_with_batch(
+                &plan.catalog,
+                &plan.database,
+                &plan.table,
+                plan.branch.as_deref(),
+                None,
+            )
             .await?;
 
         // check mutability
@@ -317,6 +324,7 @@ impl ReplaceInterpreter {
             vec![]
         };
 
+        let table_info = ResolvedTableInfo::new(table_info).with_branch(plan.branch.clone());
         root = PhysicalPlan::new(ReplaceDeduplicate {
             input: root,
             on_conflicts: on_conflicts.clone(),
@@ -363,7 +371,7 @@ impl ReplaceInterpreter {
         root = PhysicalPlan::new(CommitSink {
             input: root,
             snapshot: base_snapshot,
-            table_info: table_info.clone(),
+            table_info,
             commit_type: CommitType::Mutation {
                 kind: MutationKind::Replace,
                 merge_meta: false,

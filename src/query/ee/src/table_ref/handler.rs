@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -19,8 +20,10 @@ use databend_common_base::base::GlobalInstance;
 use databend_common_catalog::table_context::TableContext;
 use databend_common_exception::ErrorCode;
 use databend_common_exception::Result;
+use databend_common_meta_app::schema::RemoveTableCopiedFileReq;
 use databend_common_meta_app::schema::SnapshotRef;
 use databend_common_meta_app::schema::TableLvtCheck;
+use databend_common_meta_app::schema::TableRefId;
 use databend_common_meta_app::schema::UpdateTableMetaReq;
 use databend_common_meta_types::MatchSeq;
 use databend_common_sql::plans::CreateTableRefPlan;
@@ -123,13 +126,11 @@ impl TableRefHandler for RealTableRefHandler {
         };
 
         // write down new snapshot
-        let new_snapshot_location = fuse_table
-            .meta_location_generator()
-            .ref_snapshot_location_from_uuid(
-                seq,
-                &new_snapshot.snapshot_id,
-                new_snapshot.format_version,
-            )?;
+        let new_snapshot_location = fuse_table.meta_location_generator().gen_snapshot_location(
+            Some(seq),
+            &new_snapshot.snapshot_id,
+            new_snapshot.format_version,
+        )?;
         let data = new_snapshot.to_bytes()?;
         fuse_table
             .get_operator_ref()
@@ -151,7 +152,7 @@ impl TableRefHandler for RealTableRefHandler {
             table_id,
             seq: MatchSeq::Exact(seq),
             new_table_meta,
-            base_snapshot_location: fuse_table.snapshot_loc(),
+            base_snapshot_locations: HashMap::new(),
             // check least visible time
             lvt_check: prev_ts.map(|time| TableLvtCheck { tenant, time }),
         };
@@ -202,13 +203,23 @@ impl TableRefHandler for RealTableRefHandler {
             table_id: table_info.ident.table_id,
             seq: MatchSeq::Exact(table_info.ident.seq),
             new_table_meta,
-            base_snapshot_location: fuse_table.snapshot_loc(),
+            base_snapshot_locations: HashMap::new(),
             lvt_check: None,
         };
         catalog.update_single_table_meta(req, table_info).await?;
 
-        // clear the ref snapshot.
+        // Dropping the ref snapshot directory.
         clearup_ref_dir(fuse_table, table_ref.id).await;
+        // Remove the copied files from metaserver.
+        let _ = catalog
+            .remove_table_copied_file_info(table_info, RemoveTableCopiedFileReq {
+                table_ref_id: TableRefId {
+                    table_id: table_info.ident.table_id,
+                    branch_id: Some(table_ref.id),
+                },
+                batch_size: None,
+            })
+            .await;
         Ok(())
     }
 }

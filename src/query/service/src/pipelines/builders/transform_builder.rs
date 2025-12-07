@@ -48,7 +48,6 @@ use databend_storages_common_table_meta::meta::Statistics;
 use meta::TableMetaTimestamps;
 
 use crate::pipelines::PipelineBuilder;
-use crate::pipelines::processors::transforms::TransformResortAddOn;
 
 impl PipelineBuilder {
     pub(crate) fn filter_transform_builder(
@@ -219,24 +218,6 @@ impl PipelineBuilder {
                 source_schema.clone(),
                 target_schema.clone(),
                 func_ctx.clone(),
-            )
-        })
-    }
-
-    pub(crate) fn fill_and_reorder_transform_builder(
-        &self,
-        table: Arc<dyn Table>,
-        source_schema: DataSchemaRef,
-    ) -> Result<impl Fn(Arc<InputPort>, Arc<OutputPort>) -> Result<ProcessorPtr> + use<>> {
-        let ctx = self.ctx.clone();
-        Ok(move |transform_input_port, transform_output_port| {
-            TransformResortAddOn::try_create(
-                ctx.clone(),
-                transform_input_port,
-                transform_output_port,
-                source_schema.clone(),
-                Arc::new(table.schema().into()),
-                table.clone(),
             )
         })
     }

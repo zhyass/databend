@@ -177,12 +177,11 @@ impl Binder {
         bind_context: &mut BindContext,
         stmt: &ShowLocksStmt,
     ) -> Result<Plan> {
-        // let user = ctx.get_current_user()?.name;
         let ShowLocksStmt { in_account, limit } = stmt;
 
         let mut select_builder = SelectBuilder::from("system.locks");
         select_builder
-            .with_order_by("table_id")
+            .with_order_by("table_ident")
             .with_order_by("revision");
 
         if *in_account {

@@ -189,7 +189,7 @@ pub async fn do_vacuum2(
     if need_update_lvt {
         let cat = ctx.get_default_catalog()?;
         cat.set_table_lvt(
-            &LeastVisibleTimeIdent::new(ctx.get_tenant(), fuse_table.get_id()),
+            &LeastVisibleTimeIdent::new(ctx.get_tenant(), fuse_table.get_table_id()),
             &LeastVisibleTime::new(gc_root.timestamp.unwrap()),
         )
         .await?;
@@ -335,7 +335,7 @@ pub async fn do_vacuum2(
     let table_agg_index_ids = catalog
         .list_index_ids_by_table_id(ListIndexesByIdReq::new(
             ctx.get_tenant(),
-            fuse_table.get_id(),
+            fuse_table.get_table_id(),
         ))
         .await?;
     let inverted_indexes = &table_info.meta.indexes;
@@ -471,7 +471,7 @@ async fn set_lvt(
 
     let lvt_point = cat
         .set_table_lvt(
-            &LeastVisibleTimeIdent::new(ctx.get_tenant(), fuse_table.get_id()),
+            &LeastVisibleTimeIdent::new(ctx.get_tenant(), fuse_table.get_table_id()),
             &LeastVisibleTime::new(lvt_point_candidate),
         )
         .await?
@@ -523,9 +523,11 @@ async fn select_gc_root(
             info!("anchor has no prev_snapshot_id, stop vacuuming");
             return Ok(None);
         };
-        let gc_root_path = fuse_table
-            .meta_location_generator()
-            .snapshot_location_from_uuid(&gc_root_id, gc_root_ver)?;
+        let gc_root_path = fuse_table.meta_location_generator().gen_snapshot_location(
+            None,
+            &gc_root_id,
+            gc_root_ver,
+        )?;
         if !is_uuid_v7(&gc_root_id) {
             info!("gc_root {} is not v7", gc_root_path);
             return Ok(None);
@@ -716,13 +718,11 @@ async fn process_new_refs(
                 let gc_root_snap = fuse_table
                     .find_earliest_snapshot_via_history(ref_name, snapshot_ref)
                     .await?;
-                let gc_root_location = fuse_table
-                    .meta_location_generator()
-                    .ref_snapshot_location_from_uuid(
-                        branch_id,
-                        &gc_root_snap.snapshot_id,
-                        gc_root_snap.format_version,
-                    )?;
+                let gc_root_location = fuse_table.meta_location_generator().gen_snapshot_location(
+                    Some(branch_id),
+                    &gc_root_snap.snapshot_id,
+                    gc_root_snap.format_version,
+                )?;
                 if snapshot_ref.loc != gc_root_location {
                     // Only collect snapshot timestamps when the GC root is NOT the head location.
                     update_gc_root_times(
@@ -820,13 +820,11 @@ async fn process_snapshot_refs(
                         let earliest_snap = fuse_table
                             .find_earliest_snapshot_via_history(ref_name, snapshot_ref)
                             .await?;
-                        let location = fuse_table
-                            .meta_location_generator()
-                            .ref_snapshot_location_from_uuid(
-                                branch_id,
-                                &earliest_snap.snapshot_id,
-                                earliest_snap.format_version,
-                            )?;
+                        let location = fuse_table.meta_location_generator().gen_snapshot_location(
+                            Some(branch_id),
+                            &earliest_snap.snapshot_id,
+                            earliest_snap.format_version,
+                        )?;
                         (location, earliest_snap)
                     }
                 };
@@ -918,9 +916,11 @@ async fn process_branch_gc_root(
     let Some((gc_root_id, gc_root_ver)) = last_snapshot.prev_snapshot_id else {
         return Ok(None);
     };
-    let gc_root_path = fuse_table
-        .meta_location_generator()
-        .ref_snapshot_location_from_uuid(branch_id, &gc_root_id, gc_root_ver)?;
+    let gc_root_path = fuse_table.meta_location_generator().gen_snapshot_location(
+        Some(branch_id),
+        &gc_root_id,
+        gc_root_ver,
+    )?;
 
     // Try to read gc_root snapshot
     match SnapshotsIO::read_snapshot(gc_root_path.clone(), op, false).await {

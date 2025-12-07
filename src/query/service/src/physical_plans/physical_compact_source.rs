@@ -20,13 +20,13 @@ use databend_common_catalog::plan::PartInfoType;
 use databend_common_catalog::plan::Partitions;
 use databend_common_catalog::plan::PartitionsShuffleKind;
 use databend_common_catalog::plan::Projection;
+use databend_common_catalog::table::ResolvedTableInfo;
 use databend_common_catalog::table::Table;
 use databend_common_catalog::table::TableExt;
 use databend_common_catalog::table_context::TableContext;
 use databend_common_exception::ErrorCode;
 use databend_common_exception::Result;
 use databend_common_expression::ColumnId;
-use databend_common_meta_app::schema::TableInfo;
 use databend_common_pipeline::sources::EmptySource;
 use databend_common_pipeline::sources::PrefetchAsyncSourcer;
 use databend_common_pipeline_transforms::TransformPipelineHelper;
@@ -54,7 +54,7 @@ use crate::pipelines::PipelineBuilder;
 pub struct CompactSource {
     pub meta: PhysicalPlanMeta,
     pub parts: Partitions,
-    pub table_info: TableInfo,
+    pub table_info: ResolvedTableInfo,
     pub column_ids: HashSet<ColumnId>,
     pub table_meta_timestamps: TableMetaTimestamps,
 }
@@ -232,16 +232,19 @@ impl PhysicalPlanBuilder {
             catalog,
             database,
             table,
+            branch,
             limit,
         } = compact_block;
 
         let tenant = self.ctx.get_tenant();
         let catalog = self.ctx.get_catalog(catalog).await?;
-        let tbl = catalog.get_table(&tenant, database, table).await?;
+        let tbl = catalog
+            .get_table_with_branch(&tenant, database, table, branch.as_deref())
+            .await?;
         // check mutability
         tbl.check_mutable()?;
 
-        let table_info = tbl.get_table_info().clone();
+        let table_info = ResolvedTableInfo::new(tbl.get_table_info()).with_branch(branch.clone());
 
         let Some((parts, snapshot)) = tbl.compact_blocks(self.ctx.clone(), limit.clone()).await?
         else {

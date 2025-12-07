@@ -33,8 +33,9 @@ use databend_common_expression::BlockMetaInfoDowncast;
 use databend_common_expression::VirtualDataSchema;
 use databend_common_license::license::Feature::Vacuum;
 use databend_common_license::license_manager::LicenseManagerSwitch;
+use databend_common_meta_app::schema::RemoveTableCopiedFileReq;
 use databend_common_meta_app::schema::TableInfo;
-use databend_common_meta_app::schema::TruncateTableReq;
+use databend_common_meta_app::schema::TableRefId;
 use databend_common_meta_app::schema::UpdateStreamMetaReq;
 use databend_common_meta_app::schema::UpsertTableCopiedFileReq;
 use databend_common_metrics::storage::*;
@@ -151,7 +152,6 @@ where F: SnapshotGenerator + Send + Sync + 'static
     ) -> Result<ProcessorPtr> {
         let purge_mode = Self::purge_mode(ctx.as_ref(), table, &snapshot_gen)?;
         let enable_auto_analyze = Self::enable_auto_analyze(ctx.clone(), table, &snapshot_gen);
-
         let vacuum_handler = if LicenseManagerSwitch::instance()
             .check_enterprise_enabled(ctx.get_license_key(), Vacuum)
             .is_ok()
@@ -295,9 +295,9 @@ where F: SnapshotGenerator + Send + Sync + 'static
         let CommitMeta {
             conflict_resolve_context,
             new_segment_locs,
-            table_id: _,
             virtual_schema,
             hll,
+            ..
         } = meta;
 
         let has_new_segments = !new_segment_locs.is_empty();
@@ -507,11 +507,14 @@ where F: SnapshotGenerator + Send + Sync + 'static
                     table_stats_gen,
                 ) {
                     Ok(snapshot) => {
-                        set_compaction_num_block_hint(
-                            self.ctx.as_ref(),
-                            table_info.name.as_str(),
-                            &snapshot.summary,
-                        );
+                        // No need enable auto compaction for table branch.
+                        if self.table.get_table_branch().is_none() {
+                            set_compaction_num_block_hint(
+                                self.ctx.as_ref(),
+                                table_info.name.as_str(),
+                                &snapshot.summary,
+                            );
+                        }
                         self.state = State::TryCommit {
                             data: snapshot.to_bytes()?,
                             snapshot,
@@ -619,9 +622,12 @@ where F: SnapshotGenerator + Send + Sync + 'static
                 table_info,
             } => {
                 snapshot.ensure_segments_unique()?;
-                let location = self
-                    .location_gen
-                    .snapshot_location_from_uuid(&snapshot.snapshot_id, TableSnapshot::VERSION)?;
+                let branch_id = self.table.get_table_branch().map(|b| b.branch_id());
+                let location = self.location_gen.gen_snapshot_location(
+                    branch_id,
+                    &snapshot.snapshot_id,
+                    TableSnapshot::VERSION,
+                )?;
                 self.dal.write(&location, data).await?;
 
                 // enable auto analyze.
@@ -657,13 +663,19 @@ where F: SnapshotGenerator + Send + Sync + 'static
                         if self.need_truncate() {
                             // Truncate table operation should be executed in the context of ddl,
                             // which implies auto commit mode.
-                            // Note that `catalog.truncate_table` may mutate table state in the meta server.
+                            // Note that `catalog.remove_table_copied_file_info` may mutate table state in the meta server.
                             assert!(!self.ctx.txn_mgr().lock().is_active());
                             catalog
-                                .truncate_table(&table_info, TruncateTableReq {
-                                    table_id: table_info.ident.table_id,
-                                    batch_size: None,
-                                })
+                                .remove_table_copied_file_info(
+                                    &table_info,
+                                    RemoveTableCopiedFileReq {
+                                        table_ref_id: TableRefId {
+                                            table_id: table_info.ident.table_id,
+                                            branch_id,
+                                        },
+                                        batch_size: None,
+                                    },
+                                )
                                 .await?;
                         }
 

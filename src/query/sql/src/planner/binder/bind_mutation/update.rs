@@ -52,8 +52,6 @@ impl Binder {
         stmt: &UpdateStmt,
     ) -> Result<Plan> {
         let UpdateStmt {
-            catalog,
-            database,
             table,
             table_alias,
             update_list,
@@ -65,15 +63,11 @@ impl Binder {
 
         self.init_cte(bind_context, with)?;
 
-        let target_table_identifier =
-            TableIdentifier::new(self, catalog, database, table, &None, table_alias);
+        let target_table_identifier = TableIdentifier::new_with_ref(self, table, table_alias);
 
         let target_table_reference = TableReference::Table {
             span: None,
-            catalog: catalog.clone(),
-            database: database.clone(),
             table: table.clone(),
-            ref_name: None,
             alias: table_alias.clone(),
             temporal: None,
             with_options: None,

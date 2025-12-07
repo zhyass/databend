@@ -192,11 +192,7 @@ impl Interpreter for VacuumDropTablesInterpreter {
             tables.len(),
             tables
                 .iter()
-                .map(|t| format!(
-                    "{}(id:{})",
-                    t.get_table_info().name,
-                    t.get_table_info().ident.table_id
-                ))
+                .map(|t| format!("{}(id:{})", t.get_table_info().name, t.get_table_id()))
                 .collect::<Vec<_>>()
                 .join(", "),
             drop_ids
@@ -210,7 +206,10 @@ impl Interpreter for VacuumDropTablesInterpreter {
             .partition(|tbl| tbl.get_table_info().meta.engine == VIEW_ENGINE);
 
         {
-            let view_ids = views.into_iter().map(|v| v.get_id()).collect::<Vec<_>>();
+            let view_ids = views
+                .into_iter()
+                .map(|v| v.get_table_id())
+                .collect::<Vec<_>>();
             info!("view ids excluded from purging data: {:?}", view_ids);
         }
 

@@ -40,12 +40,12 @@ impl FromToProto for mt::LockKey {
         reader_check_msg(p.ver, p.min_reader_ver)?;
 
         match p.key {
-            Some(pb::lock_key::Key::Table(pb::lock_key::Table { table_id, tenant })) => {
+            Some(pb::lock_key::Key::Table(pb::lock_key::Table { id, tenant })) => {
                 let non_empty = NonEmptyString::new(tenant)
                     .map_err(|_e| Incompatible::new("tenant is empty"))?;
 
                 let tenant = Tenant::new_nonempty(non_empty);
-                Ok(mt::LockKey::Table { tenant, table_id })
+                Ok(mt::LockKey::Table { tenant, id })
             }
             None => Err(Incompatible::new("LockKey cannot be None".to_string())),
         }
@@ -53,9 +53,9 @@ impl FromToProto for mt::LockKey {
 
     fn to_pb(&self) -> Result<pb::LockKey, Incompatible> {
         let key = match self {
-            mt::LockKey::Table { tenant, table_id } => {
+            mt::LockKey::Table { tenant, id } => {
                 Some(pb::lock_key::Key::Table(pb::lock_key::Table {
-                    table_id: *table_id,
+                    id: *id,
                     tenant: tenant.tenant_name().to_string(),
                 }))
             }
