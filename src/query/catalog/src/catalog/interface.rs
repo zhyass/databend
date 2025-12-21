@@ -494,6 +494,7 @@ pub trait Catalog: DynClone + Send + Sync + Debug {
         _tenant: &Tenant,
         _db_name: &str,
         _table_id: u64,
+        _branch_id: Option<u64>,
     ) -> Result<ListTableCopiedFileReply> {
         Err(ErrorCode::Unimplemented(format!(
             "'list_table_copied_file_info' not implemented for catalog {}",

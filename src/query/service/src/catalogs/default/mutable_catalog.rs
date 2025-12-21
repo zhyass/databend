@@ -812,9 +812,10 @@ impl Catalog for MutableCatalog {
         tenant: &Tenant,
         db_name: &str,
         table_id: u64,
+        branch_id: Option<u64>,
     ) -> Result<ListTableCopiedFileReply> {
         let db = self.get_database(tenant, db_name).await?;
-        db.list_table_copied_file_info(table_id).await
+        db.list_table_copied_file_info(table_id, branch_id).await
     }
 
     #[async_backtrace::framed]

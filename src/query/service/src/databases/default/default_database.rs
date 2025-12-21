@@ -295,8 +295,16 @@ impl Database for DefaultDatabase {
     }
 
     #[async_backtrace::framed]
-    async fn list_table_copied_file_info(&self, table_id: u64) -> Result<ListTableCopiedFileReply> {
-        let res = self.ctx.meta.list_table_copied_file_info(table_id).await?;
+    async fn list_table_copied_file_info(
+        &self,
+        table_id: u64,
+        branch_id: Option<u64>,
+    ) -> Result<ListTableCopiedFileReply> {
+        let res = self
+            .ctx
+            .meta
+            .list_table_copied_file_info(table_id, branch_id)
+            .await?;
         Ok(res)
     }
 

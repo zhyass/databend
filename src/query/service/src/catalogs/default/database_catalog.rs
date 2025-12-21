@@ -606,9 +606,10 @@ impl Catalog for DatabaseCatalog {
         tenant: &Tenant,
         db_name: &str,
         table_id: u64,
+        branch_id: Option<u64>,
     ) -> Result<ListTableCopiedFileReply> {
         self.mutable_catalog
-            .list_table_copied_file_info(tenant, db_name, table_id)
+            .list_table_copied_file_info(tenant, db_name, table_id, branch_id)
             .await
     }
 

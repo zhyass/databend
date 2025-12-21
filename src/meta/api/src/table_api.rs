@@ -1274,7 +1274,7 @@ where
             for (file_name, file_info) in req.file_info {
                 let key = TableCopiedFileNameIdent {
                     table_id: tbid.table_id,
-                    branch_id: req.branch_id,
+                    branch_id: req.branch_id.unwrap_or(0),
                     file: file_name,
                 };
 
@@ -1703,7 +1703,7 @@ where
         for file in req.files.iter() {
             let ident = TableCopiedFileNameIdent {
                 table_id,
-                branch_id: req.branch_id,
+                branch_id: req.branch_id.unwrap_or(0),
                 file: file.clone(),
             };
             keys.push(ident.to_string_key());
@@ -1731,29 +1731,19 @@ where
     async fn list_table_copied_file_info(
         &self,
         table_id: u64,
+        branch_id: Option<u64>,
     ) -> Result<ListTableCopiedFileReply, MetaError> {
         // List all copied files under this table (including main table and all branches)
         let key = TableCopiedFileNameIdent {
             table_id,
-            branch_id: 0, // Start from root, will list all branches
+            branch_id: branch_id.unwrap_or(0),
             file: "".to_string(),
         };
 
         let res = self.list_pb_vec(&DirName::new(key)).await?;
         let mut file_info = BTreeMap::new();
         for (name_key, seqv) in res {
-            // Key structure: __fd_table_copied_files/{table_id}/{branch_id}/{file_name}
-            // - branch_id = 0: main table
-            // - branch_id > 0: specific branch
-            // For display purposes:
-            // - Main table (branch_id = 0): just the file name
-            // - Branch (branch_id > 0): {branch_id}/{file_name}
-            let key_name = if name_key.branch_id == 0 {
-                name_key.file.clone()
-            } else {
-                format!("{}/{}", name_key.branch_id, name_key.file)
-            };
-            file_info.insert(key_name, seqv.data);
+            file_info.insert(name_key.file, seqv.data);
         }
 
         Ok(ListTableCopiedFileReply { file_info })

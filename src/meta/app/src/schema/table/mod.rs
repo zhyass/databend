@@ -1174,8 +1174,7 @@ pub struct TableCopiedFileInfo {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GetTableCopiedFileReq {
     pub table_id: u64,
-    /// Branch ID. Use 0 for main table, non-zero for branches.
-    pub branch_id: u64,
+    pub branch_id: Option<u64>,
     pub files: Vec<String>,
 }
 
@@ -1188,8 +1187,7 @@ pub type ListTableCopiedFileReply = GetTableCopiedFileReply;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UpsertTableCopiedFileReq {
-    /// Branch ID. Use 0 for main table, non-zero for branches.
-    pub branch_id: u64,
+    pub branch_id: Option<u64>,
     pub file_info: BTreeMap<String, TableCopiedFileInfo>,
     /// If not None, specifies the time-to-live for the keys.
     pub ttl: Option<Duration>,

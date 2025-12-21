@@ -230,7 +230,7 @@ impl CopyHistorySource {
         let table_id = table.get_id();
         let catalog = ctx.get_default_catalog().unwrap();
         let copied_files = catalog
-            .list_table_copied_file_info(&ctx.get_tenant(), &db_name, table_id)
+            .list_table_copied_file_info(&ctx.get_tenant(), &db_name, table_id, None)
             .await?
             .file_info;
 

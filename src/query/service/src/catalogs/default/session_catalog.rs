@@ -594,6 +594,7 @@ impl Catalog for SessionCatalog {
         tenant: &Tenant,
         db_name: &str,
         table_id: u64,
+        branch_id: Option<u64>,
     ) -> Result<ListTableCopiedFileReply> {
         let reply = if is_temp_table_id(table_id) {
             self.temp_tbl_mgr
@@ -601,7 +602,7 @@ impl Catalog for SessionCatalog {
                 .list_table_copied_file_info(table_id)?
         } else {
             self.inner
-                .list_table_copied_file_info(tenant, db_name, table_id)
+                .list_table_copied_file_info(tenant, db_name, table_id, branch_id)
                 .await?
         };
         Ok(reply)

@@ -224,6 +224,7 @@ pub trait Database: DynClone + Sync + Send {
     async fn list_table_copied_file_info(
         &self,
         _table_id: u64,
+        _branch_id: Option<u64>,
     ) -> Result<ListTableCopiedFileReply> {
         Err(ErrorCode::Unimplemented(format!(
             "UnImplement list_table_copied_file_info in {} Database",

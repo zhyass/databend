@@ -1535,7 +1535,7 @@ impl TableContext for QueryContext {
         };
         let table_id = table.get_id();
         // Get branch_id: 0 for main table, non-zero for branches
-        let branch_id = table.get_table_branch().map(|b| b.branch_id()).unwrap_or(0);
+        let branch_id = table.get_table_branch().map(|b| b.branch_id());
 
         let mut result_size: usize = 0;
         let max_files = max_files.unwrap_or(usize::MAX);
