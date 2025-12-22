@@ -45,6 +45,7 @@ pub struct Into {
     pub catalog: String,
     pub database: String,
     pub table: String,
+    pub branch: Option<String>,
     // eval scalar and project subquery's output with VALUES ( source_col_name [ , ... ] ) (if exists)
     pub source_scalar_exprs: Option<Vec<ScalarExpr>>,
     //  cast to ( target_col_name [ , ... ] )'s schema (if exists) or target table's schema

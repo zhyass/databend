@@ -25,6 +25,7 @@ use databend_common_expression::types::DataType;
 use databend_common_expression::DataSchemaRef;
 use databend_common_expression::TableSchema;
 
+use crate::binder::util::TableIdentifier;
 use crate::binder::ScalarBinder;
 use crate::plans::Else;
 use crate::plans::InsertMultiTable;
@@ -165,18 +166,32 @@ impl Binder {
         let mut intos = vec![];
         for into_clause in into_clauses {
             let IntoClause {
-                database,
                 table,
                 target_columns,
                 source_columns,
-                catalog,
             } = into_clause;
-            let (catalog_name, database_name, table_name) =
-                self.normalize_object_identifier_triple(catalog, database, table);
+            let table_identifier = TableIdentifier::new(
+                self,
+                &table.catalog,
+                &table.database,
+                &table.table,
+                &table.branch,
+                &None,
+            );
+            let catalog_name = table_identifier.catalog_name();
+            let database_name = table_identifier.database_name();
+            let table_name = table_identifier.table_name();
+            let branch_name = table_identifier.branch_name();
 
             let target_table = self
                 .ctx
-                .get_table(&catalog_name, &database_name, &table_name)
+                .get_table_with_batch(
+                    &catalog_name,
+                    &database_name,
+                    &table_name,
+                    branch_name.as_deref(),
+                    None,
+                )
                 .await?;
             target_tables.insert(
                 target_table.get_id(),
@@ -267,6 +282,7 @@ impl Binder {
                 catalog: catalog_name,
                 database: database_name,
                 table: table_name,
+                branch: branch_name,
                 source_scalar_exprs,
                 casted_schema: Arc::new(casted_schema.into()),
             });

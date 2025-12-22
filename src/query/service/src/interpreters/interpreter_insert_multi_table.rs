@@ -307,6 +307,7 @@ impl InsertMultiTableInterpreter {
                 catalog,
                 database,
                 table,
+                branch,
                 casted_schema,
                 source_scalar_exprs,
             } = into;
