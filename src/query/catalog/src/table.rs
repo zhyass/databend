@@ -109,8 +109,15 @@ pub trait Table: Sync + Send {
         None
     }
 
+    fn table_or_branch_id(&self) -> u64 {
+        self.get_table_branch()
+            .map_or(self.get_id(), |v| v.branch_id())
+    }
+
     fn get_data_source_info(&self) -> DataSourceInfo {
-        DataSourceInfo::TableSource(self.get_table_info().clone())
+        let table_info = self.get_table_info().clone();
+        let branch = self.get_table_branch().map(|b| b.name.clone());
+        DataSourceInfo::TableSource { table_info, branch }
     }
 
     /// get_data_metrics will get data metrics from table.

@@ -218,6 +218,7 @@ impl QueryContext {
         &self,
         table_info: &TableInfo,
         table_args: Option<TableArgs>,
+        branch_name: Option<&str>,
     ) -> Result<Arc<dyn Table>> {
         let catalog = self
             .shared
@@ -225,7 +226,7 @@ impl QueryContext {
             .build_catalog(table_info.catalog_info.clone(), self.session_state()?)?;
 
         let is_default = catalog.info().catalog_type() == CatalogType::Default;
-        match (table_args, is_default) {
+        let table = match (table_args, is_default) {
             (Some(table_args), true) => {
                 let default_catalog = self
                     .shared
@@ -273,7 +274,14 @@ impl QueryContext {
                 }
             }
             (None, false) => catalog.get_table_by_info(table_info),
-        }
+        }?;
+
+        let table = if let Some(branch) = branch_name {
+            table.with_branch(branch)?
+        } else {
+            table
+        };
+        Ok(table)
     }
 
     // Build external table by stage info, this is used in:
@@ -825,8 +833,8 @@ impl TableContext for QueryContext {
     /// This method builds a `dyn Table`, which provides table specific io methods the plan needs.
     fn build_table_from_source_plan(&self, plan: &DataSourcePlan) -> Result<Arc<dyn Table>> {
         match &plan.source_info {
-            DataSourceInfo::TableSource(table_info) => {
-                self.build_table_by_table_info(table_info, plan.tbl_args.clone())
+            DataSourceInfo::TableSource { table_info, branch } => {
+                self.build_table_by_table_info(table_info, plan.tbl_args.clone(), branch.as_deref())
             }
             DataSourceInfo::StageSource(stage_info) => {
                 self.build_external_by_table_info(stage_info, plan.tbl_args.clone())

@@ -263,7 +263,7 @@ impl TableScan {
         internal_column: Option<BTreeMap<FieldIndex, InternalColumn>>,
     ) -> PhysicalPlan {
         let name = match &source.source_info {
-            DataSourceInfo::TableSource(_) => "TableScan".to_string(),
+            DataSourceInfo::TableSource { .. } => "TableScan".to_string(),
             DataSourceInfo::StageSource(_) => "StageScan".to_string(),
             DataSourceInfo::ParquetSource(_) => "ParquetScan".to_string(),
             DataSourceInfo::ResultScanSource(_) => "ResultScan".to_string(),

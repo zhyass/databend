@@ -449,9 +449,11 @@ impl IPhysicalPlan for ChunkFillAndReorder {
         let mut f: Vec<DynTransformBuilder> = Vec::with_capacity(self.fill_and_reorders.len());
         for fill_and_reorder in self.fill_and_reorders.iter() {
             if let Some(fill_and_reorder) = fill_and_reorder {
-                let table = builder
-                    .ctx
-                    .build_table_by_table_info(&fill_and_reorder.target_table_info, None)?;
+                let table = builder.ctx.build_table_by_table_info(
+                    &fill_and_reorder.target_table_info,
+                    None,
+                    fill_and_reorder.branch.as_deref(),
+                )?;
                 f.push(Box::new(builder.fill_and_reorder_transform_builder(
                     table,
                     fill_and_reorder.source_schema.clone(),
@@ -469,6 +471,7 @@ impl IPhysicalPlan for ChunkFillAndReorder {
 pub struct FillAndReorder {
     pub source_schema: DataSchemaRef,
     pub target_table_info: TableInfo,
+    pub branch: Option<String>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -530,9 +533,11 @@ impl IPhysicalPlan for ChunkAppendData {
         let mut sort_num = 0;
 
         for append_data in self.target_tables.iter() {
-            let table = builder
-                .ctx
-                .build_table_by_table_info(&append_data.target_table_info, None)?;
+            let table = builder.ctx.build_table_by_table_info(
+                &append_data.target_table_info,
+                None,
+                append_data.branch.as_deref(),
+            )?;
             let block_thresholds = table.get_block_thresholds();
             compact_task_builders.push(Box::new(
                 builder.block_compact_task_builder(block_thresholds)?,
@@ -627,6 +632,7 @@ impl IPhysicalPlan for ChunkAppendData {
 pub struct SerializableTable {
     pub target_catalog_info: Arc<CatalogInfo>,
     pub target_table_info: TableInfo,
+    pub branch: Option<String>,
     pub table_meta_timestamps: TableMetaTimestamps,
 }
 
@@ -755,9 +761,11 @@ impl IPhysicalPlan for ChunkCommitInsert {
         let mut tables = HashMap::new();
 
         for target in &self.targets {
-            let table = builder
-                .ctx
-                .build_table_by_table_info(&target.target_table_info, None)?;
+            let table = builder.ctx.build_table_by_table_info(
+                &target.target_table_info,
+                None,
+                target.branch.as_deref(),
+            )?;
             let block_thresholds = table.get_block_thresholds();
             serialize_segment_builders.push(Box::new(
                 builder.serialize_segment_transform_builder(
@@ -772,7 +780,8 @@ impl IPhysicalPlan for ChunkCommitInsert {
                     target.table_meta_timestamps,
                 )?,
             ));
-            table_meta_timestampss.insert(table.get_id(), target.table_meta_timestamps);
+            let tid = table.table_or_branch_id();
+            table_meta_timestampss.insert(tid, target.table_meta_timestamps);
             tables.insert(table.get_id(), table);
         }
 

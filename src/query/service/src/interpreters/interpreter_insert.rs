@@ -228,6 +228,7 @@ impl Interpreter for InsertInterpreter {
                         exchange.derive(vec![PhysicalPlan::new(DistributedInsertSelect {
                             input,
                             table_info: table1.get_table_info().clone(),
+                            branch: self.plan.branch.clone(),
                             select_schema: plan.schema(),
                             select_column_bindings,
                             insert_schema: self.plan.dest_schema(),
@@ -242,6 +243,7 @@ impl Interpreter for InsertInterpreter {
                             // which is not correct. We should generate a new id for insert.
                             input: select_plan,
                             table_info: table1.get_table_info().clone(),
+                            branch: self.plan.branch.clone(),
                             select_schema: plan.schema(),
                             select_column_bindings,
                             insert_schema: self.plan.dest_schema(),

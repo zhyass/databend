@@ -153,6 +153,7 @@ impl CopyIntoTableInterpreter {
             required_source_schema: plan.required_source_schema.clone(),
             stage_table_info: plan.stage_table_info.clone(),
             table_info,
+            branch: plan.branch.clone(),
             write_mode: plan.write_mode,
             validation_mode: plan.validation_mode.clone(),
             project_columns,

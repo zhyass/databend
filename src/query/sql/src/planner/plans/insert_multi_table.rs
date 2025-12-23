@@ -22,6 +22,8 @@ use super::Plan;
 use crate::MetadataRef;
 use crate::ScalarExpr;
 
+pub type TableRef = (String, String, Option<String>); // (database, table, branch)
+
 #[derive(Clone, Debug)]
 pub struct InsertMultiTable {
     pub overwrite: bool,
@@ -30,7 +32,7 @@ pub struct InsertMultiTable {
     pub whens: Vec<When>,
     pub opt_else: Option<Else>,
     pub intos: Vec<Into>,
-    pub target_tables: Vec<(u64, (String, String))>, /* (table_id, (database, table)), statement returns result set in this order */
+    pub target_tables: Vec<(u64, TableRef)>, /* (table_id, (database, table)), statement returns result set in this order */
     pub meta_data: MetadataRef,
 }
 
@@ -60,8 +62,12 @@ pub struct Else {
 impl InsertMultiTable {
     pub fn schema(&self) -> DataSchemaRef {
         let mut fields = vec![];
-        for (_, (db, tbl)) in self.target_tables.iter() {
-            let field_name = format!("number of rows inserted into {}.{}", db, tbl);
+        for (_, (db, tbl, branch)) in self.target_tables.iter() {
+            let suffix = branch
+                .as_ref()
+                .map(|b| format!("/{}", b))
+                .unwrap_or_default();
+            let field_name = format!("number of rows inserted into {}.{}{}", db, tbl, suffix);
             fields.push(DataField::new(
                 &field_name,
                 DataType::Number(NumberDataType::UInt64),

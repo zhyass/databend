@@ -1258,7 +1258,7 @@ impl AccessChecker for PrivilegeAccess {
                             DataSourceInfo::ORCSource(stage_info) => {
                                 self.validate_stage_access(&stage_info.stage_table_info.stage_info, UserPrivilegeType::Read).await?;
                             }
-                            DataSourceInfo::TableSource(_) | DataSourceInfo::ResultScanSource(_) => {}
+                            DataSourceInfo::TableSource { .. } | DataSourceInfo::ResultScanSource(_) => {}
                         }
                     }
                     if table.is_source_of_view() || table.table().is_temp() {

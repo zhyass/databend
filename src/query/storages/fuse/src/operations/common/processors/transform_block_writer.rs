@@ -242,7 +242,11 @@ impl TransformBlockWriter {
         Self {
             ctx,
             dal: table.get_operator(),
-            table_id: if with_tid { Some(table.get_id()) } else { None },
+            table_id: if with_tid {
+                Some(table.table_or_branch_id())
+            } else {
+                None
+            },
             kind,
         }
     }

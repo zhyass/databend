@@ -26,7 +26,10 @@ use crate::plan::StageTableInfo;
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub enum DataSourceInfo {
     // Normal table source, `fuse/system`.
-    TableSource(TableInfo),
+    TableSource {
+        table_info: TableInfo,
+        branch: Option<String>,
+    },
     // Internal/External source, like `s3://` or `azblob://`.
     StageSource(StageTableInfo),
     // stage source with parquet format used for select.
@@ -40,7 +43,7 @@ pub enum DataSourceInfo {
 impl DataSourceInfo {
     pub fn schema(&self) -> Arc<TableSchema> {
         match self {
-            DataSourceInfo::TableSource(table_info) => table_info.schema(),
+            DataSourceInfo::TableSource { table_info, .. } => table_info.schema(),
             DataSourceInfo::StageSource(table_info) => table_info.schema(),
             DataSourceInfo::ParquetSource(table_info) => table_info.schema(),
             DataSourceInfo::ResultScanSource(table_info) => table_info.schema(),
@@ -54,7 +57,7 @@ impl DataSourceInfo {
     /// So we will return default as it's catalog.
     pub fn catalog_name(&self) -> &str {
         match self {
-            DataSourceInfo::TableSource(table_info) => {
+            DataSourceInfo::TableSource { table_info, .. } => {
                 &table_info.catalog_info.name_ident.catalog_name
             }
             _ => CATALOG_DEFAULT,
@@ -63,7 +66,7 @@ impl DataSourceInfo {
 
     pub fn desc(&self) -> String {
         match self {
-            DataSourceInfo::TableSource(table_info) => table_info.desc.clone(),
+            DataSourceInfo::TableSource { table_info, .. } => table_info.desc.clone(),
             DataSourceInfo::StageSource(table_info) => table_info.desc(),
             DataSourceInfo::ParquetSource(table_info) => table_info.desc(),
             DataSourceInfo::ResultScanSource(table_info) => table_info.desc(),

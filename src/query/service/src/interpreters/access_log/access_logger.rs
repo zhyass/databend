@@ -548,7 +548,7 @@ fn extract_metadata_ref(metadata: &MetadataRef) -> Vec<AccessObject> {
                 };
                 table_to_columns.insert(table.index(), access_object);
             }
-            DataSourceInfo::TableSource(_) => {
+            DataSourceInfo::TableSource { .. } => {
                 let access_object = AccessObject {
                     object_domain: ObjectDomain::Table,
                     object_name: format!(

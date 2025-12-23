@@ -161,7 +161,7 @@ impl Binder {
         into_clauses: &[IntoClause],
         source_schema: DataSchemaRef,
         source_bind_context: &mut BindContext,
-        target_tables: &mut HashMap<u64, (String, String)>,
+        target_tables: &mut HashMap<u64, (String, String, Option<String>)>,
     ) -> Result<Vec<Into>> {
         let mut intos = vec![];
         for into_clause in into_clauses {
@@ -193,9 +193,16 @@ impl Binder {
                     None,
                 )
                 .await?;
+            let tid = target_table
+                .get_table_branch()
+                .map_or(target_table.get_id(), |v| v.branch_id());
             target_tables.insert(
-                target_table.get_id(),
-                (database_name.clone(), table_name.clone()),
+                tid,
+                (
+                    database_name.clone(),
+                    table_name.clone(),
+                    branch_name.clone(),
+                ),
             );
 
             let n_target_col = if target_columns.is_empty() {

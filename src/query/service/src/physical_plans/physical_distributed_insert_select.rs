@@ -33,6 +33,7 @@ pub struct DistributedInsertSelect {
     pub meta: PhysicalPlanMeta,
     pub input: PhysicalPlan,
     pub table_info: TableInfo,
+    pub branch: Option<String>,
     pub insert_schema: DataSchemaRef,
     pub select_schema: DataSchemaRef,
     pub select_column_bindings: Vec<ColumnBinding>,
@@ -78,6 +79,7 @@ impl IPhysicalPlan for DistributedInsertSelect {
             meta: self.meta.clone(),
             input,
             table_info: self.table_info.clone(),
+            branch: self.branch.clone(),
             insert_schema: self.insert_schema.clone(),
             select_schema: self.select_schema.clone(),
             select_column_bindings: self.select_column_bindings.clone(),
@@ -110,9 +112,11 @@ impl IPhysicalPlan for DistributedInsertSelect {
             })?;
         }
 
-        let table = builder
-            .ctx
-            .build_table_by_table_info(&self.table_info, None)?;
+        let table = builder.ctx.build_table_by_table_info(
+            &self.table_info,
+            None,
+            self.branch.as_deref(),
+        )?;
 
         let source_schema = insert_schema;
         PipelineBuilder::fill_and_reorder_columns(
