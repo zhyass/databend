@@ -57,7 +57,7 @@ pub struct CommitMultiTableInsert {
     update_stream_meta: Vec<UpdateStreamMetaReq>,
     deduplicated_label: Option<String>,
     catalog: Arc<dyn Catalog>,
-    table_meta_timestampss: HashMap<u64, TableMetaTimestamps>,
+    table_meta_timestamps: HashMap<u64, TableMetaTimestamps>,
 }
 
 impl CommitMultiTableInsert {
@@ -68,7 +68,7 @@ impl CommitMultiTableInsert {
         update_stream_meta: Vec<UpdateStreamMetaReq>,
         deduplicated_label: Option<String>,
         catalog: Arc<dyn Catalog>,
-        table_meta_timestampss: HashMap<u64, TableMetaTimestamps>,
+        table_meta_timestamps: HashMap<u64, TableMetaTimestamps>,
     ) -> Self {
         Self {
             commit_metas: Default::default(),
@@ -78,8 +78,59 @@ impl CommitMultiTableInsert {
             update_stream_meta,
             deduplicated_label,
             catalog,
-            table_meta_timestampss,
+            table_meta_timestamps,
         }
+    }
+
+    #[async_backtrace::framed]
+    async fn finish(&mut self) -> Result<()> {
+        let mut update_temp_tables = Vec::with_capacity(self.commit_metas.len());
+        let insert_rows = {
+            let stats = self.ctx.get_multi_table_insert_status();
+            let status = stats.lock();
+            status.insert_rows.clone()
+        };
+
+        let mut table_write_states = HashMap::with_capacity(self.commit_metas.len());
+        for (tid, commit_meta) in std::mem::take(&mut self.commit_metas).into_iter() {
+            let table = self.tables.remove(&tid).unwrap();
+            if table.is_temp() {
+                update_temp_tables.push(UpdateTempTableReq {
+                    table_id: tid,
+                    new_table_meta: table.get_table_info().meta.clone(),
+                    copied_files: Default::default(),
+                    desc: table.get_table_info().desc.clone(),
+                });
+                continue;
+            }
+
+            // Get or create TableWriteState
+            let state =
+                table_write_states
+                    .entry(table.get_id())
+                    .or_insert_with(|| TableWriteState {
+                        table: table.clone(),
+                        builds: HashMap::new(),
+                    });
+
+            // Create snapshot generator
+            let mut snapshot_generator = AppendGenerator::new(self.ctx.clone(), self.overwrite);
+            snapshot_generator.set_conflict_resolve_context(commit_meta.conflict_resolve_context);
+            let table_meta_timestamps = self.table_meta_timestamps.get(&tid).unwrap().clone();
+
+            // Determine if this is main or branch
+            let branch_id = table.get_table_branch().map(|b| b.branch_id()).unwrap_or(0); // 0 represents main
+
+            state.builds.insert(branch_id, SnapshotBuild {
+                hll: commit_meta.hll,
+                snapshot_generator,
+                table_meta_timestamps,
+                insert_rows: insert_rows.get(&tid).cloned().unwrap_or_default(),
+            });
+        }
+
+        // build update table metas req.
+        todo!()
     }
 }
 
@@ -116,7 +167,7 @@ impl AsyncSink for CommitMultiTableInsert {
                         table.as_ref(),
                         &snapshot_generator,
                         self.ctx.txn_mgr(),
-                        *self.table_meta_timestampss.get(&table.get_id()).unwrap(),
+                        *self.table_meta_timestamps.get(&table.get_id()).unwrap(),
                         &commit_meta.hll,
                         insert_rows.get(&table_id).cloned().unwrap_or_default(),
                     )
@@ -207,7 +258,7 @@ impl AsyncSink for CommitMultiTableInsert {
                                     table.as_ref(),
                                     snapshot_generators.get(&tid).unwrap(),
                                     self.ctx.txn_mgr(),
-                                    *self.table_meta_timestampss.get(&tid).unwrap(),
+                                    *self.table_meta_timestamps.get(&tid).unwrap(),
                                     hlls.get(&tid).unwrap(),
                                     insert_rows.get(&tid).cloned().unwrap_or_default(),
                                 )
@@ -309,4 +360,38 @@ async fn build_update_table_meta_req(
         base_snapshot_location: fuse_table.snapshot_loc(),
     };
     Ok(req)
+}
+
+/// Represents the snapshot build state for a table, including main and branch snapshots.
+struct TableWriteState {
+    /// The table object.
+    table: Arc<dyn Table>,
+
+    /// Mapping from branch_id to its snapshot build state.
+    /// `0` is reserved for the main table snapshot.
+    builds: HashMap<u64, SnapshotBuild>,
+}
+
+/// Contains information needed to build a snapshot for a table or branch.
+struct SnapshotBuild {
+    /// HyperLogLog structure for NDV/statistics.
+    hll: BlockHLL,
+
+    /// Snapshot generator for creating table/branch snapshots.
+    snapshot_generator: AppendGenerator,
+
+    /// Timestamp info for table metadata.
+    table_meta_timestamps: TableMetaTimestamps,
+
+    /// Number of rows inserted.
+    insert_rows: u64,
+}
+
+/// Represents the commit input after snapshots are built.
+struct TableCommitInput {
+    /// Main table snapshot and its location, if present.
+    main_snapshot: Option<(TableSnapshot, String)>,
+
+    /// Branch snapshots and their locations.
+    branch_locations: HashMap<u64, String>,
 }

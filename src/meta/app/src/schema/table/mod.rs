@@ -390,6 +390,15 @@ impl TableInfo {
         }
         Ok(table_ref)
     }
+
+    pub fn get_table_ref_by_id(&self, id: u64) -> Result<&SnapshotRef> {
+        self.meta.refs.values().find(|r| r.id == id).ok_or_else(|| {
+            ErrorCode::UnknownReference(format!(
+                "Unknown reference '{}' in table {}",
+                id, self.desc
+            ))
+        })
+    }
 }
 
 impl Default for TablePartition {
