@@ -30,7 +30,7 @@ use databend_common_expression::Scalar;
 use databend_common_expression::TableSchema;
 use databend_common_meta_app::app_error::AppError;
 use databend_common_meta_app::app_error::UnknownTableId;
-use databend_common_meta_app::schema::SnapshotRef;
+use databend_common_meta_app::schema::BranchInfo;
 use databend_common_meta_app::schema::SnapshotRefType;
 use databend_common_meta_app::schema::TableIdent;
 use databend_common_meta_app::schema::TableInfo;
@@ -576,26 +576,6 @@ pub trait TableExt: Table {
     }
 }
 impl<T: ?Sized> TableExt for T where T: Table {}
-
-#[derive(Clone)]
-pub struct BranchInfo {
-    pub name: String,
-    pub info: SnapshotRef,
-}
-
-impl BranchInfo {
-    pub fn branch_name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn branch_id(&self) -> u64 {
-        self.info.id
-    }
-
-    pub fn branch_type(&self) -> SnapshotRefType {
-        self.info.typ.clone()
-    }
-}
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum TimeNavigation {

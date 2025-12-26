@@ -18,6 +18,7 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use backoff::backoff::Backoff;
+use chrono::Utc;
 use databend_common_catalog::catalog::Catalog;
 use databend_common_catalog::table::Table;
 use databend_common_catalog::table::TableExt;
@@ -26,17 +27,20 @@ use databend_common_exception::ErrorCode;
 use databend_common_exception::Result;
 use databend_common_expression::BlockMetaInfoDowncast;
 use databend_common_expression::DataBlock;
+use databend_common_meta_app::schema::TableInfo;
+use databend_common_meta_app::schema::TableStatistics;
 use databend_common_meta_app::schema::UpdateMultiTableMetaReq;
 use databend_common_meta_app::schema::UpdateStreamMetaReq;
 use databend_common_meta_app::schema::UpdateTableMetaReq;
 use databend_common_meta_app::schema::UpdateTempTableReq;
 use databend_common_meta_types::MatchSeq;
 use databend_common_pipeline::sinks::AsyncSink;
-use databend_storages_common_session::TxnManagerRef;
 use databend_storages_common_table_meta::meta::BlockHLL;
 use databend_storages_common_table_meta::meta::TableMetaTimestamps;
 use databend_storages_common_table_meta::meta::TableSnapshot;
 use databend_storages_common_table_meta::meta::Versioned;
+use databend_storages_common_table_meta::table::OPT_KEY_LEGACY_SNAPSHOT_LOC;
+use databend_storages_common_table_meta::table::OPT_KEY_SNAPSHOT_LOCATION;
 use log::debug;
 use log::error;
 use log::info;
@@ -81,9 +85,15 @@ impl CommitMultiTableInsert {
             table_meta_timestamps,
         }
     }
+}
+
+#[async_trait]
+impl AsyncSink for CommitMultiTableInsert {
+    const NAME: &'static str = "CommitMultiTableInsert";
 
     #[async_backtrace::framed]
-    async fn finish(&mut self) -> Result<()> {
+    async fn on_finish(&mut self) -> Result<()> {
+        let mut update_table_metas = Vec::with_capacity(self.commit_metas.len());
         let mut update_temp_tables = Vec::with_capacity(self.commit_metas.len());
         let insert_rows = {
             let stats = self.ctx.get_multi_table_insert_status();
@@ -129,54 +139,8 @@ impl CommitMultiTableInsert {
             });
         }
 
-        // build update table metas req.
-        todo!()
-    }
-}
-
-#[async_trait]
-impl AsyncSink for CommitMultiTableInsert {
-    const NAME: &'static str = "CommitMultiTableInsert";
-
-    #[async_backtrace::framed]
-    async fn on_finish(&mut self) -> Result<()> {
-        let mut update_table_metas = Vec::with_capacity(self.commit_metas.len());
-        let mut update_temp_tables = Vec::with_capacity(self.commit_metas.len());
-        let mut snapshot_generators = HashMap::with_capacity(self.commit_metas.len());
-        let mut hlls = HashMap::with_capacity(self.commit_metas.len());
-        let insert_rows = {
-            let stats = self.ctx.get_multi_table_insert_status();
-            let status = stats.lock();
-            status.insert_rows.clone()
-        };
-        for (table_id, commit_meta) in std::mem::take(&mut self.commit_metas).into_iter() {
-            // generate snapshot
-            let mut snapshot_generator = AppendGenerator::new(self.ctx.clone(), self.overwrite);
-            snapshot_generator.set_conflict_resolve_context(commit_meta.conflict_resolve_context);
-            let table = self.tables.get(&table_id).unwrap();
-            if table.is_temp() {
-                update_temp_tables.push(UpdateTempTableReq {
-                    table_id,
-                    new_table_meta: table.get_table_info().meta.clone(),
-                    copied_files: Default::default(),
-                    desc: table.get_table_info().desc.clone(),
-                });
-            } else {
-                update_table_metas.push((
-                    build_update_table_meta_req(
-                        table.as_ref(),
-                        &snapshot_generator,
-                        self.ctx.txn_mgr(),
-                        *self.table_meta_timestamps.get(&table.get_id()).unwrap(),
-                        &commit_meta.hll,
-                        insert_rows.get(&table_id).cloned().unwrap_or_default(),
-                    )
-                    .await?,
-                    table.get_table_info().clone(),
-                ));
-            }
-            snapshot_generators.insert(table_id, snapshot_generator);
-            hlls.insert(table_id, commit_meta.hll);
+        for write_state in table_write_states.values() {
+            update_table_metas.push(write_state.build_update_table_meta_req().await?);
         }
 
         let mut backoff = set_backoff(None, None, None);
@@ -248,21 +212,14 @@ impl AsyncSink for CommitMultiTableInsert {
                     );
                     databend_common_base::base::tokio::time::sleep(duration).await;
                     for (tid, seq, meta) in update_failed_tbls {
-                        let table = self.tables.get_mut(&tid).unwrap();
-                        *table = table
+                        let state = table_write_states.get_mut(&tid).unwrap();
+                        state.table = state
+                            .table
                             .refresh_with_seq_meta(self.ctx.as_ref(), seq, meta)
                             .await?;
                         for (req, _) in update_table_metas.iter_mut() {
                             if req.table_id == tid {
-                                *req = build_update_table_meta_req(
-                                    table.as_ref(),
-                                    snapshot_generators.get(&tid).unwrap(),
-                                    self.ctx.txn_mgr(),
-                                    *self.table_meta_timestamps.get(&tid).unwrap(),
-                                    hlls.get(&tid).unwrap(),
-                                    insert_rows.get(&tid).cloned().unwrap_or_default(),
-                                )
-                                .await?;
+                                *req = state.build_update_table_meta_req().await?.0;
                                 break;
                             }
                         }
@@ -311,57 +268,6 @@ impl AsyncSink for CommitMultiTableInsert {
     }
 }
 
-async fn build_update_table_meta_req(
-    table: &dyn Table,
-    snapshot_generator: &AppendGenerator,
-    txn_mgr: TxnManagerRef,
-    table_meta_timestamps: TableMetaTimestamps,
-    insert_hll: &BlockHLL,
-    insert_rows: u64,
-) -> Result<UpdateTableMetaReq> {
-    let fuse_table = FuseTable::try_from_table(table)?;
-    let previous = fuse_table.read_table_snapshot().await?;
-    let table_stats_gen = fuse_table
-        .generate_table_stats(&previous, insert_hll, insert_rows)
-        .await?;
-    let table_info = table.get_table_info();
-    let snapshot = snapshot_generator.generate_new_snapshot(
-        table_info,
-        fuse_table.cluster_key_id(),
-        previous,
-        txn_mgr,
-        table_meta_timestamps,
-        table_stats_gen,
-    )?;
-    snapshot.ensure_segments_unique()?;
-    set_compaction_num_block_hint(
-        snapshot_generator.ctx.as_ref(),
-        table_info.name.as_str(),
-        &snapshot.summary,
-    );
-
-    // write snapshot
-    let dal = fuse_table.get_operator();
-    let location_generator = &fuse_table.meta_location_generator;
-    let location = location_generator
-        .snapshot_location_from_uuid(&snapshot.snapshot_id, TableSnapshot::VERSION)?;
-    dal.write(&location, snapshot.to_bytes()?).await?;
-
-    // build new table meta
-    let new_table_meta =
-        fuse_table.build_new_table_meta(&fuse_table.table_info.meta, &location, &snapshot)?;
-    let table_id = fuse_table.table_info.ident.table_id;
-    let table_version = fuse_table.table_info.ident.seq;
-
-    let req = UpdateTableMetaReq {
-        table_id,
-        seq: MatchSeq::Exact(table_version),
-        new_table_meta,
-        base_snapshot_location: fuse_table.snapshot_loc(),
-    };
-    Ok(req)
-}
-
 /// Represents the snapshot build state for a table, including main and branch snapshots.
 struct TableWriteState {
     /// The table object.
@@ -387,11 +293,102 @@ struct SnapshotBuild {
     insert_rows: u64,
 }
 
-/// Represents the commit input after snapshots are built.
-struct TableCommitInput {
-    /// Main table snapshot and its location, if present.
-    main_snapshot: Option<(TableSnapshot, String)>,
+impl TableWriteState {
+    /// Builds snapshots for all branches and the main table, returning the commit input.
+    #[async_backtrace::framed]
+    async fn build_update_table_meta_req(&self) -> Result<(UpdateTableMetaReq, TableInfo)> {
+        let fuse_table = FuseTable::try_from_table(self.table.as_ref())?;
+        let table_info = fuse_table.get_table_info();
+        let options = table_info.options();
+        let base_snapshot_location = options
+            .get(OPT_KEY_SNAPSHOT_LOCATION)
+            .or_else(|| options.get(OPT_KEY_LEGACY_SNAPSHOT_LOC))
+            .cloned();
+        let cluster_key_id = fuse_table.cluster_key_id();
+        let dal = fuse_table.get_operator();
+        let location_generator = &fuse_table.meta_location_generator;
 
-    /// Branch snapshots and their locations.
-    branch_locations: HashMap<u64, String>,
+        let mut main_snapshot = None;
+        let mut branch_locations = HashMap::new();
+        for (&branch_id, build) in self.builds.iter() {
+            let ctx = build.snapshot_generator.ctx.as_ref();
+            let (previous_location, branch_name) = if branch_id == 0 {
+                (base_snapshot_location.clone(), None)
+            } else {
+                let branch = table_info.get_branch_info_by_id(branch_id)?;
+                (Some(branch.info.loc), Some(branch.name))
+            };
+            let previous = fuse_table
+                .read_table_snapshot_with_location(previous_location)
+                .await?;
+            let table_stats_gen = fuse_table
+                .generate_table_stats(&previous, &build.hll, build.insert_rows)
+                .await?;
+            let snapshot = build.snapshot_generator.generate_new_snapshot(
+                table_info,
+                cluster_key_id,
+                previous,
+                ctx.txn_mgr(),
+                build.table_meta_timestamps,
+                table_stats_gen,
+            )?;
+            snapshot.ensure_segments_unique()?;
+
+            // Write snapshot to storage
+            let location = if branch_name.is_none() {
+                location_generator
+                    .snapshot_location_from_uuid(&snapshot.snapshot_id, TableSnapshot::VERSION)?
+            } else {
+                location_generator.ref_snapshot_location_from_uuid(
+                    branch_id,
+                    &snapshot.snapshot_id,
+                    TableSnapshot::VERSION,
+                )?
+            };
+            dal.write(&location, snapshot.to_bytes()?).await?;
+
+            if let Some(branch_name) = branch_name {
+                branch_locations.insert(branch_name, location);
+            } else {
+                set_compaction_num_block_hint(ctx, table_info.name.as_str(), &snapshot.summary);
+                main_snapshot = Some((snapshot, location));
+            }
+        }
+
+        let mut new_table_meta = table_info.meta.clone();
+        for (branch_name, loc) in branch_locations {
+            // safe to unwrap
+            let branch_ref = new_table_meta.refs.get_mut(&branch_name).unwrap();
+            branch_ref.loc = loc;
+        }
+        if let Some((snapshot, location)) = main_snapshot {
+            new_table_meta
+                .options
+                .insert(OPT_KEY_SNAPSHOT_LOCATION.to_owned(), location.to_owned());
+            new_table_meta.options.remove(OPT_KEY_LEGACY_SNAPSHOT_LOC);
+
+            let stats = &snapshot.summary;
+            new_table_meta.statistics = TableStatistics {
+                number_of_rows: stats.row_count,
+                data_bytes: stats.uncompressed_byte_size,
+                compressed_data_bytes: stats.compressed_byte_size,
+                index_data_bytes: stats.index_size,
+                bloom_index_size: stats.bloom_index_size,
+                ngram_index_size: stats.ngram_index_size,
+                inverted_index_size: stats.inverted_index_size,
+                vector_index_size: stats.vector_index_size,
+                virtual_column_size: stats.virtual_column_size,
+                number_of_segments: Some(snapshot.segments.len() as u64),
+                number_of_blocks: Some(stats.block_count),
+            };
+        }
+        new_table_meta.updated_on = Utc::now();
+        let req = UpdateTableMetaReq {
+            table_id: table_info.ident.table_id,
+            seq: MatchSeq::Exact(table_info.ident.seq),
+            new_table_meta,
+            base_snapshot_location,
+        };
+        Ok((req, table_info.clone()))
+    }
 }

@@ -759,7 +759,6 @@ impl IPhysicalPlan for ChunkCommitInsert {
         let mut mutation_aggregator_builders: Vec<DynTransformBuilder> =
             Vec::with_capacity(self.targets.len());
         let mut tables = HashMap::new();
-
         for target in &self.targets {
             let table = builder.ctx.build_table_by_table_info(
                 &target.target_table_info,
@@ -782,7 +781,7 @@ impl IPhysicalPlan for ChunkCommitInsert {
             ));
             let tid = table.table_or_branch_id();
             table_meta_timestampss.insert(tid, target.table_meta_timestamps);
-            tables.insert(table.get_id(), table);
+            tables.insert(tid, table);
         }
 
         builder

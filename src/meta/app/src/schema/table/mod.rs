@@ -235,6 +235,26 @@ impl Display for SnapshotRefType {
     }
 }
 
+#[derive(Clone)]
+pub struct BranchInfo {
+    pub name: String,
+    pub info: SnapshotRef,
+}
+
+impl BranchInfo {
+    pub fn branch_name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn branch_id(&self) -> u64 {
+        self.info.id
+    }
+
+    pub fn branch_type(&self) -> SnapshotRefType {
+        self.info.typ.clone()
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct SecurityPolicyColumnMap {
     pub policy_id: u64,
@@ -391,13 +411,21 @@ impl TableInfo {
         Ok(table_ref)
     }
 
-    pub fn get_table_ref_by_id(&self, id: u64) -> Result<&SnapshotRef> {
-        self.meta.refs.values().find(|r| r.id == id).ok_or_else(|| {
-            ErrorCode::UnknownReference(format!(
-                "Unknown reference '{}' in table {}",
-                id, self.desc
-            ))
-        })
+    pub fn get_branch_info_by_id(&self, id: u64) -> Result<BranchInfo> {
+        self.meta
+            .refs
+            .iter()
+            .find(|(_, r)| r.id == id)
+            .map(|(name, info)| BranchInfo {
+                name: name.clone(),
+                info: info.clone(),
+            })
+            .ok_or_else(|| {
+                ErrorCode::UnknownReference(format!(
+                    "Unknown reference '{}' in table {}",
+                    id, self.desc
+                ))
+            })
     }
 }
 
