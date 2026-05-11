@@ -48,6 +48,7 @@ mod report;
 mod scalar;
 mod scalar_common;
 mod select;
+pub(crate) mod session_branch;
 mod set;
 mod set_priority;
 mod show;

@@ -187,15 +187,17 @@ impl Binder {
             let table_name = table_identifier.table_name();
             let branch_name = table_identifier.branch_name();
 
-            let target_table = self
-                .ctx
-                .get_table_with_branch(
+            let resolved = self
+                .resolve_write_table_with_session_branch(
+                    &table_identifier,
                     &catalog_name,
                     &database_name,
                     &table_name,
-                    branch_name.as_deref(),
+                    branch_name,
                 )
                 .await?;
+            let branch_name = resolved.branch;
+            let target_table = resolved.table;
             target_tables.insert(target_table.get_id(), InsertMultiTableTarget {
                 table_id: target_table.get_id(),
                 catalog: catalog_name.clone(),

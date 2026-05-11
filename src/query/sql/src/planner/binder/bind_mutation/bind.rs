@@ -145,6 +145,17 @@ impl Binder {
             target_table_identifier.table_name_alias(),
         );
 
+        let resolved = self
+            .resolve_write_table_with_session_branch(
+                &target_table_identifier,
+                &catalog_name,
+                &database_name,
+                &table_name,
+                branch_name,
+            )
+            .await?;
+        let branch_name = resolved.branch;
+
         // Add table lock before execution.
         let lock_guard = if strategy != MutationStrategy::NotMatchedOnly {
             self.ctx

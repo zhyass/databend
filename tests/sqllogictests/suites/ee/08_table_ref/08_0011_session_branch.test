@@ -1,0 +1,236 @@
+## Copyright 2023 Databend Cloud
+##
+## Licensed under the Elastic License, Version 2.0 (the "License");
+## you may not use this file except in compliance with the License.
+## You may obtain a copy of the License at
+##
+##     https://www.elastic.co/licensing/elastic-license
+##
+## Unless required by applicable law or agreed to in writing, software
+## distributed under the License is distributed on an "AS IS" BASIS,
+## WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+## See the License for the specific language governing permissions and
+## limitations under the License.
+
+statement ok
+set enable_experimental_table_ref=1;
+
+statement ok
+DROP DATABASE IF EXISTS test_session_branch
+
+statement ok
+CREATE DATABASE test_session_branch
+
+statement ok
+USE test_session_branch
+
+statement ok
+CREATE TABLE t1(a INT, b STRING)
+
+statement ok
+INSERT INTO t1 VALUES (1, 'a'), (2, 'b')
+
+statement ok
+ALTER TABLE t1 CREATE BRANCH dev
+
+statement ok
+ALTER TABLE t1 CREATE BRANCH other
+
+statement ok
+INSERT INTO t1/dev VALUES (3, 'c')
+
+statement ok
+INSERT INTO t1/other VALUES (5, 'e')
+
+statement ok
+CREATE VIEW v1 AS SELECT * FROM t1
+
+statement ok
+CREATE STREAM s_base ON TABLE t1
+
+statement ok
+CREATE TABLE t_memory(a INT) ENGINE = Memory
+
+statement ok
+INSERT INTO t_memory VALUES (7)
+
+statement ok
+CREATE TEMP TABLE t_temp(a INT)
+
+statement ok
+INSERT INTO t_temp VALUES (8)
+
+## session_branch empty: normal behavior.
+query IT
+SELECT * FROM t1 ORDER BY a
+----
+1 a
+2 b
+
+statement ok
+SET session_branch = 'dev'
+
+## FUSE reads use an existing session branch.
+query IT
+SELECT * FROM t1 ORDER BY a
+----
+1 a
+2 b
+3 c
+
+## FUSE writes use an existing session branch.
+statement ok
+INSERT INTO t1 VALUES (4, 'd')
+
+query IT
+SELECT * FROM t1 ORDER BY a
+----
+1 a
+2 b
+3 c
+4 d
+
+## Base table is unchanged.
+statement ok
+UNSET session_branch
+
+query IT
+SELECT * FROM t1 ORDER BY a
+----
+1 a
+2 b
+
+## Explicit branch overrides session_branch.
+statement ok
+SET session_branch = 'dev'
+
+query IT
+SELECT * FROM t1/other ORDER BY a
+----
+1 a
+2 b
+5 e
+
+## Missing branch falls back to base for reads and errors for writes.
+statement ok
+UNSET session_branch
+
+statement ok
+SET session_branch = 'nonexistent'
+
+query IT
+SELECT * FROM t1 ORDER BY a
+----
+1 a
+2 b
+
+statement error .*Branch 'nonexistent' does not exist.*
+INSERT INTO t1 VALUES (99, 'fail')
+
+## System, memory, and temp tables are not branch-routed.
+statement ok
+UNSET session_branch
+
+statement ok
+SET session_branch = 'dev'
+
+query T
+SELECT name FROM system.databases WHERE name = 'test_session_branch'
+----
+test_session_branch
+
+query I
+SELECT * FROM t_memory
+----
+7
+
+statement error .*not affected by session_branch='dev'.*
+INSERT INTO t_memory VALUES (8)
+
+query I
+SELECT * FROM t_temp ORDER BY a
+----
+8
+
+statement ok
+INSERT INTO t_temp VALUES (9)
+
+query I
+SELECT * FROM t_temp ORDER BY a
+----
+8
+9
+
+## Views keep their stored definition semantics in phase 1.
+query IT
+SELECT * FROM v1 ORDER BY a
+----
+1 a
+2 b
+
+## Stream reads must match the active session branch.
+query error .*bound to a base table.*session_branch='dev'.*
+SELECT * FROM s_base
+
+statement error .*CREATE STREAM ON TABLE test_session_branch.t1 is not allowed.*
+CREATE STREAM s_base_rejected ON TABLE t1
+
+statement error .*not allowed while session_branch='dev'.*
+CREATE STREAM s_other_rejected ON TABLE t1/other
+
+statement ok
+CREATE STREAM s_dev ON TABLE t1/dev
+
+statement ok
+INSERT INTO t1 VALUES (6, 'stream_dev')
+
+query ITTB
+SELECT a, b, change$action, change$is_update FROM s_dev ORDER BY a
+----
+6 stream_dev INSERT 0
+
+## Object-level DDL and non-branch-aware metadata operations are rejected.
+statement error .*not allowed while session_branch.*
+DROP TABLE t1
+
+statement error .*not allowed while session_branch.*
+CREATE TABLE t2(x INT)
+
+statement error .*not allowed while session_branch.*
+ALTER TABLE t1 RENAME TO t1_new
+
+statement error .*not allowed while session_branch.*
+DESCRIBE t1
+
+statement error .*not allowed while session_branch.*
+SHOW CREATE TABLE t1
+
+## Branch management is allowed under session_branch.
+statement ok
+ALTER TABLE t1 CREATE BRANCH another
+
+statement ok
+ALTER TABLE t1 DROP BRANCH another
+
+## UNSET session_branch restores normal DDL.
+statement ok
+UNSET session_branch
+
+statement ok
+CREATE TABLE t2(x INT)
+
+statement ok
+DROP TABLE t2
+
+## EXPLAIN works under session_branch.
+statement ok
+SET session_branch = 'dev'
+
+statement ok
+EXPLAIN SELECT * FROM t1
+
+statement ok
+UNSET session_branch
+
+statement ok
+DROP DATABASE test_session_branch

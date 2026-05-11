@@ -81,6 +81,10 @@ impl Binder {
                 )));
             }
         }
+        self.check_create_stream_under_session_branch(
+            &format!("{table_database}.{table_name}"),
+            table_branch.as_deref(),
+        )?;
 
         let plan = CreateStreamPlan {
             create_option: create_option.clone().into(),

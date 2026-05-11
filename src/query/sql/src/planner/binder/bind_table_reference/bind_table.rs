@@ -147,11 +147,6 @@ impl Binder {
 
         let navigation = self.resolve_temporal_clause(bind_context, temporal)?;
         if let Some(branch_name) = branch_name.as_ref() {
-            // Branch-qualified reads are feature/license gated during table resolution in
-            // QueryContext::get_table_from_shared() before any branch table is loaded. Keep the
-            // binder-side branch handling here focused on syntax/semantic validation.
-            // Branch reads are supported in FROM, but TAG navigation stays bound to the base table
-            // namespace (`db.table AT (TAG => ...)`). Reject the mixed form early in binder.
             if matches!(
                 navigation.as_ref(),
                 Some(TimeNavigation::TimeTravel(NavigationPoint::TableTag(_)))
@@ -172,22 +167,22 @@ impl Binder {
         }
 
         // Resolve table with catalog
-        let table_meta = {
+        let (table_meta, resolved_branch) = {
             let table_name = if let Some(cte_suffix_name) = cte_suffix_name.as_ref() {
                 format!("{}${}", &table_name, cte_suffix_name)
             } else {
                 table_name.clone()
             };
-            match self.resolve_data_source(
-                &self.ctx,
+            match self.resolve_data_source_with_session_branch(
                 catalog.as_str(),
                 database.as_str(),
                 table_name.as_str(),
-                branch_name.as_deref(),
+                branch_name.clone(),
                 navigation.as_ref(),
                 max_batch_size,
+                !bind_context.binding_views.is_empty(),
             ) {
-                Ok(table) => table,
+                Ok(resolved) => (resolved.table, resolved.branch),
                 Err(e) => {
                     let mut parent = bind_context.parent.as_mut();
                     loop {
@@ -233,7 +228,7 @@ impl Binder {
                     database.clone(),
                     table_name.clone(),
                     table_meta.clone(),
-                    branch_name,
+                    resolved_branch.clone(),
                     table_name_alias,
                     !bind_context.binding_views.is_empty(),
                     bind_context.planning_agg_index,
@@ -323,14 +318,17 @@ impl Binder {
                         database.clone(),
                         table_name,
                         table_meta,
-                        branch_name,
+                        resolved_branch.clone(),
                         table_name_alias,
                         false,
                         false,
                         false,
                     );
-                    let (s_expr, mut new_bind_context) =
-                        self.bind_query(&mut new_bind_context, query)?;
+                    let previous_session_branch_disabled = self.session_branch_disabled;
+                    self.session_branch_disabled = true;
+                    let bind_result = self.bind_query(&mut new_bind_context, query);
+                    self.session_branch_disabled = previous_session_branch_disabled;
+                    let (s_expr, mut new_bind_context) = bind_result?;
                     if let Some(alias) = alias {
                         // view maybe has alias, e.g. select v1.col1 from v as v1;
                         new_bind_context.apply_table_alias(alias, &self.name_resolution_ctx)?;
@@ -359,7 +357,7 @@ impl Binder {
                     database.clone(),
                     table_name,
                     table_meta,
-                    branch_name,
+                    resolved_branch,
                     table_name_alias,
                     !bind_context.binding_views.is_empty(),
                     bind_context.planning_agg_index,

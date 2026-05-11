@@ -1661,6 +1661,13 @@ impl DefaultSettings {
                     scope: SettingScope::Both,
                     range: Some(SettingRange::Numeric(0..=1)),
                 }),
+                ("session_branch", DefaultSettingValue {
+                    value: UserSettingValue::String("".to_string()),
+                    desc: "Routes table reads/writes to the named branch. Empty string disables.",
+                    mode: SettingMode::Both,
+                    scope: SettingScope::Session,
+                    range: None,
+                }),
                 ("force_aggregate_shuffle_mode", DefaultSettingValue {
                     value: UserSettingValue::String(String::from("auto")),
                     desc: "For testing only. Shuffle mode for aggregation. Options are 'auto', 'row', 'bucket'. Default is 'auto'.",

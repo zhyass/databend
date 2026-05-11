@@ -119,16 +119,17 @@ impl Binder {
             table_identifier.branch_name(),
         );
 
-        let table = self
-            .ctx
-            .get_table_with_branch(
+        let resolved = self
+            .resolve_write_table_with_session_branch(
+                &table_identifier,
                 &catalog_name,
                 &database_name,
                 &table_name,
-                branch_name.as_deref(),
+                branch_name,
             )
-            .await
-            .map_err(|err| table_identifier.not_found_suggest_error(err))?;
+            .await?;
+        let branch_name = resolved.branch;
+        let table = resolved.table;
 
         let required_values_schema = self.schema_project(
             &table.schema(),

@@ -104,6 +104,8 @@ pub struct Binder {
     pub enable_result_cache: bool,
 
     pub subquery_executor: Option<Arc<dyn QueryExecutor>>,
+
+    pub(crate) session_branch_disabled: bool,
 }
 
 impl Binder {
@@ -129,6 +131,7 @@ impl Binder {
             m_cte_table_name: HashMap::new(),
             enable_result_cache,
             subquery_executor: None,
+            session_branch_disabled: false,
         }
     }
 

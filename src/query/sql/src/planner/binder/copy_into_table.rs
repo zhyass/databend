@@ -159,17 +159,20 @@ impl Binder {
             table_identifier.table_name(),
             table_identifier.branch_name(),
         );
+
         let catalog = self.ctx.get_catalog(&catalog_name).await?;
         let catalog_info = catalog.info();
-        let table = self
-            .ctx
-            .get_table_with_branch(
+        let resolved = self
+            .resolve_write_table_with_session_branch(
+                &table_identifier,
                 &catalog_name,
                 &database_name,
                 &table_name,
-                branch_name.as_deref(),
+                branch_name,
             )
             .await?;
+        let branch_name = resolved.branch;
+        let table = resolved.table;
         let dedup_full_path = table
             .get_table_info()
             .get_option(OPT_KEY_ENABLE_COPY_DEDUP_FULL_PATH, false);

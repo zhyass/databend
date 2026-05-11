@@ -56,6 +56,17 @@ impl Binder {
             table_identifier.branch_name(),
         );
 
+        let resolved = self
+            .resolve_write_table_with_session_branch(
+                &table_identifier,
+                &catalog_name,
+                &database_name,
+                &table_name,
+                branch_name,
+            )
+            .await?;
+        let branch_name = resolved.branch;
+
         // Add table lock before execution.
         let lock_guard = self
             .ctx

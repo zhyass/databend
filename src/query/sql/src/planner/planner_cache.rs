@@ -72,6 +72,14 @@ impl Planner {
         if !matches!(stmt, Statement::Query(_)) {
             return (false, None);
         }
+        if self
+            .ctx
+            .get_settings()
+            .get_session_branch()
+            .is_ok_and(|branch| !branch.is_empty())
+        {
+            return (false, None);
+        }
 
         let mut visitor = TableRefVisitor {
             ctx: self.ctx.clone(),

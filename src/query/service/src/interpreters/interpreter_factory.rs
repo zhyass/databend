@@ -124,6 +124,7 @@ use crate::interpreters::interpreter_worker_show::ShowWorkersInterpreter;
 use crate::interpreters::task;
 use crate::sessions::QueryContext;
 use crate::sessions::TableContextCluster;
+use crate::sessions::TableContextSettings;
 use crate::sql::plans::Plan;
 
 /// InterpreterFactory is the entry of Interpreter.
@@ -157,6 +158,9 @@ impl InterpreterFactory {
         let mut access_logger = AccessLogger::create(ctx.clone());
         access_logger.log(plan);
         access_logger.output();
+
+        Self::check_session_branch_guard(&ctx, plan)?;
+
         Self::get_warehouses_interpreter(ctx, plan, Self::get_inner)
     }
 
@@ -254,6 +258,61 @@ impl InterpreterFactory {
                 ))),
                 false => other(ctx, plan),
             },
+        }
+    }
+
+    fn check_session_branch_guard(ctx: &Arc<QueryContext>, plan: &Plan) -> Result<()> {
+        let session_branch = ctx.get_settings().get_session_branch().unwrap_or_default();
+        if session_branch.is_empty() {
+            return Ok(());
+        }
+        if Self::is_allowed_under_session_branch(plan, &session_branch) {
+            return Ok(());
+        }
+        Err(ErrorCode::SemanticError(format!(
+            "This operation is not allowed while session_branch='{}' is active. \
+             Use `UNSET session_branch` first, or use explicit branch syntax (table/branch).",
+            session_branch
+        )))
+    }
+
+    fn is_allowed_under_session_branch(plan: &Plan, session_branch: &str) -> bool {
+        match plan {
+            Plan::CreateStream(plan) => plan.table_branch.as_deref() == Some(session_branch),
+            _ => matches!(
+                plan,
+                // Reads
+                Plan::Query { .. }
+                | Plan::Explain { .. }
+                | Plan::ExplainAst { .. }
+                | Plan::ExplainSyntax { .. }
+                | Plan::ExplainAnalyze { .. }
+                | Plan::ExistsTable(_)
+                // DML
+                | Plan::Insert(_)
+                | Plan::Replace(_)
+                | Plan::DataMutation { .. }
+                | Plan::CopyIntoTable(_)
+                | Plan::InsertMultiTable(_)
+                // Branch management
+                | Plan::CreateTableBranch(_)
+                | Plan::DropTableBranch(_)
+                | Plan::UndropTableBranch(_)
+                // Session/control
+                | Plan::Set(_)
+                | Plan::Unset(_)
+                | Plan::UseDatabase(_)
+                | Plan::UseCatalog(_)
+                | Plan::Begin
+                | Plan::Commit
+                | Plan::Abort
+                | Plan::SetRole(_)
+                | Plan::SetSecondaryRoles(_)
+                | Plan::Kill(_)
+                // Read-like operations
+                | Plan::CopyIntoLocation(_)
+                | Plan::Presign(_)
+            ),
         }
     }
 
