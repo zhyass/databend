@@ -125,7 +125,7 @@ impl Interpreter for ReclusterTableInterpreter {
                     "recluster: statement aborted, server is shutting down or the query was killed, round={}",
                     times + 1
                 );
-                return Err(err.with_context("failed to execute"));
+                break Err(err.with_context("failed to execute"));
             }
 
             let res = self
@@ -215,11 +215,19 @@ impl ReclusterTableInterpreter {
         }
 
         let result = async {
+            // RECLUSTER resolves the table by name for every round. The deferred vacuum follows
+            // the same name-bound semantics and bypasses the query-level table cache instead of
+            // pinning the table ID for the statement.
             let table = self
                 .ctx
-                .get_table(&self.plan.catalog, &self.plan.database, &self.plan.table)
+                .get_catalog(&self.plan.catalog)
+                .await?
+                .get_table(
+                    &self.ctx.get_tenant(),
+                    &self.plan.database,
+                    &self.plan.table,
+                )
                 .await?;
-            let table = table.refresh(self.ctx.as_ref()).await?;
             let fuse_table = FuseTable::try_from_table(table.as_ref())?;
             // Transient tables retain their existing per-commit PurgeAllHistory behavior.
             if fuse_table.is_transient() {
