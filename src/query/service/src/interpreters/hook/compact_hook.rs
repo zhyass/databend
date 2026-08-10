@@ -280,7 +280,6 @@ pub(crate) async fn compact_table(
                 limit: Some(settings.get_auto_compaction_segments_limit()? as usize),
                 selection: None,
                 is_final: false,
-                need_final_vacuum: false,
             };
             let recluster_interpreter =
                 ReclusterTableInterpreter::try_create(ctx.clone(), recluster, lock_opt)?;

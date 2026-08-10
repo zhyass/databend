@@ -43,6 +43,7 @@ use databend_common_storages_fuse::FUSE_OPT_KEY_AGGRESSIVE_RECLUSTER;
 use databend_common_storages_fuse::FuseTable;
 use databend_common_storages_fuse::operations::ReclusterFinalCarry;
 use databend_common_storages_fuse::operations::ReclusterMode;
+use databend_common_storages_fuse::operations::is_auto_vacuum_enabled;
 use databend_enterprise_vacuum_handler::get_vacuum_handler;
 use databend_storages_common_table_meta::meta::TableMetaTimestamps;
 use databend_storages_common_table_meta::meta::TableSnapshot;
@@ -117,6 +118,7 @@ impl Interpreter for ReclusterTableInterpreter {
         let start = SystemTime::now();
         let timeout = Duration::from_secs(recluster_timeout_secs);
         let is_final = self.plan.is_final;
+        let mut committed = false;
         loop {
             if let Err(err) = ctx.check_aborting() {
                 error!(
@@ -139,6 +141,7 @@ impl Interpreter for ReclusterTableInterpreter {
                         );
                         break;
                     }
+                    committed = true;
                 }
                 Err(e) => {
                     if is_final
@@ -195,9 +198,7 @@ impl Interpreter for ReclusterTableInterpreter {
             }
         }
 
-        if self.plan.need_final_vacuum && times > 0 {
-            // CommitSink skips auto vacuum for every recluster round; FINAL performs it once at
-            // the statement boundary after at least one round committed successfully.
+        if committed {
             self.vacuum_table_history().await;
         }
 
@@ -226,9 +227,15 @@ impl ReclusterTableInterpreter {
                 )
                 .await?;
             let fuse_table = FuseTable::try_from_table(table.as_ref())?;
-            fuse_table
-                .vacuum_table(self.ctx.clone(), &get_vacuum_handler(), true)
-                .await;
+            // Transient tables retain their existing per-commit PurgeAllHistory behavior.
+            if fuse_table.is_transient() {
+                return Ok::<_, ErrorCode>(());
+            }
+            if is_auto_vacuum_enabled(self.ctx.as_ref(), fuse_table)? {
+                fuse_table
+                    .vacuum_table(self.ctx.clone(), &get_vacuum_handler(), true)
+                    .await;
+            }
             Ok::<_, ErrorCode>(())
         }
         .await;

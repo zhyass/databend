@@ -1541,27 +1541,14 @@ impl Binder {
                 is_final,
                 selection,
                 limit,
-            } => {
-                let need_final_vacuum = if *is_final {
-                    let tbl = self.ctx.get_table(&catalog, &database, &table).await?;
-                    match tbl.get_table_info().options().get("enable_auto_vacuum") {
-                        Some(value) => value.parse::<u32>()? != 0,
-                        None => self.ctx.get_settings().get_enable_auto_vacuum()?,
-                    }
-                } else {
-                    false
-                };
-
-                Ok(Plan::ReclusterTable(Box::new(ReclusterPlan {
-                    catalog,
-                    database,
-                    table,
-                    limit: limit.map(|v| v as usize),
-                    selection: selection.clone(),
-                    is_final: *is_final,
-                    need_final_vacuum,
-                })))
-            }
+            } => Ok(Plan::ReclusterTable(Box::new(ReclusterPlan {
+                catalog,
+                database,
+                table,
+                limit: limit.map(|v| v as usize),
+                selection: selection.clone(),
+                is_final: *is_final,
+            }))),
             AlterTableAction::FlashbackTo { point } => {
                 let point = self.resolve_data_travel_point(bind_context, point)?;
                 Ok(Plan::RevertTable(Box::new(RevertTablePlan {
