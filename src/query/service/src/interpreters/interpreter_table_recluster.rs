@@ -119,7 +119,7 @@ impl Interpreter for ReclusterTableInterpreter {
         let timeout = Duration::from_secs(recluster_timeout_secs);
         let is_final = self.plan.is_final;
         let mut committed = false;
-        loop {
+        let result = loop {
             if let Err(err) = ctx.check_aborting() {
                 error!(
                     "recluster: statement aborted, server is shutting down or the query was killed, round={}",
@@ -133,16 +133,14 @@ impl Interpreter for ReclusterTableInterpreter {
                 .await;
 
             match res {
-                Ok(is_break) => {
-                    if is_break {
-                        debug!(
-                            "recluster: final loop stop reason=no_recluster_parts round={}",
-                            times + 1,
-                        );
-                        break;
-                    }
-                    committed = true;
+                Ok(true) => {
+                    debug!(
+                        "recluster: final loop stop reason=no_recluster_parts round={}",
+                        times + 1,
+                    );
+                    break Ok(());
                 }
+                Ok(false) => committed = true,
                 Err(e) => {
                     if is_final
                         && matches!(
@@ -169,7 +167,7 @@ impl Interpreter for ReclusterTableInterpreter {
                             e.code(),
                             e,
                         );
-                        return Err(e);
+                        break Err(e);
                     }
                 }
             }
@@ -186,7 +184,7 @@ impl Interpreter for ReclusterTableInterpreter {
             }
 
             if !is_final {
-                break;
+                break Ok(());
             }
 
             if elapsed_time >= timeout {
@@ -194,14 +192,15 @@ impl Interpreter for ReclusterTableInterpreter {
                     "recluster: final loop stop reason=timeout round={} timeout={:?}",
                     times, timeout,
                 );
-                break;
+                break Ok(());
             }
-        }
+        };
 
         if committed {
             self.vacuum_table_history().await;
         }
 
+        result?;
         Ok(PipelineBuildResult::create())
     }
 }
@@ -218,14 +217,9 @@ impl ReclusterTableInterpreter {
         let result = async {
             let table = self
                 .ctx
-                .get_catalog(&self.plan.catalog)
-                .await?
-                .get_table(
-                    &self.ctx.get_tenant(),
-                    &self.plan.database,
-                    &self.plan.table,
-                )
+                .get_table(&self.plan.catalog, &self.plan.database, &self.plan.table)
                 .await?;
+            let table = table.refresh(self.ctx.as_ref()).await?;
             let fuse_table = FuseTable::try_from_table(table.as_ref())?;
             // Transient tables retain their existing per-commit PurgeAllHistory behavior.
             if fuse_table.is_transient() {
