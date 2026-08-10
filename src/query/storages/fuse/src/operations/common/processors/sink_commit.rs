@@ -208,6 +208,10 @@ where F: SnapshotGenerator + Send + Sync + 'static
     ) -> Result<Option<PurgeMode>> {
         let mode = if Self::need_to_purge_all_history(table, snapshot_gen) {
             Some(PurgeMode::PurgeAllHistory)
+        } else if Self::is_maintenance_mutation(snapshot_gen) {
+            // Compact, recluster, and refresh are internal maintenance commits. Running a full
+            // table-history vacuum after each one can multiply vacuum cost across one operation.
+            None
         } else if Self::is_auto_vacuum_enabled(ctx, table)? {
             Some(PurgeMode::PurgeAccordingToRetention)
         } else {
@@ -263,6 +267,18 @@ where F: SnapshotGenerator + Send + Sync + 'static
             }
             None => ctx.get_settings().get_enable_auto_vacuum(),
         }
+    }
+
+    fn is_maintenance_mutation(snapshot_gen: &F) -> bool {
+        snapshot_gen
+            .as_any()
+            .downcast_ref::<MutationGenerator>()
+            .is_some_and(|generator| {
+                matches!(
+                    generator.mutation_kind,
+                    MutationKind::Compact | MutationKind::Recluster | MutationKind::Refresh
+                )
+            })
     }
 
     fn is_error_recoverable(&self, e: &ErrorCode) -> bool {

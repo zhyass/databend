@@ -183,8 +183,6 @@ use crate::plans::VacuumTableOption;
 use crate::plans::VacuumTablePlan;
 use crate::plans::VacuumTemporaryFilesPlan;
 
-const FUSE_OPT_KEY_AGGRESSIVE_RECLUSTER: &str = "aggressive_recluster";
-
 #[derive(Visitor)]
 #[visitor(FunctionCall(enter))]
 struct PartitionBucketValidator {
@@ -1029,7 +1027,7 @@ impl Binder {
                 .await?;
             if !keys.is_empty() {
                 options
-                    .entry(FUSE_OPT_KEY_AGGRESSIVE_RECLUSTER.to_owned())
+                    .entry("aggressive_recluster".to_owned())
                     .or_insert_with(|| "1".to_owned());
                 cluster_key = Some(format!("({})", keys.join(", ")));
             }
@@ -1543,14 +1541,27 @@ impl Binder {
                 is_final,
                 selection,
                 limit,
-            } => Ok(Plan::ReclusterTable(Box::new(ReclusterPlan {
-                catalog,
-                database,
-                table,
-                limit: limit.map(|v| v as usize),
-                selection: selection.clone(),
-                is_final: *is_final,
-            }))),
+            } => {
+                let need_final_vacuum = if *is_final {
+                    let tbl = self.ctx.get_table(&catalog, &database, &table).await?;
+                    match tbl.get_table_info().options().get("enable_auto_vacuum") {
+                        Some(value) => value.parse::<u32>()? != 0,
+                        None => self.ctx.get_settings().get_enable_auto_vacuum()?,
+                    }
+                } else {
+                    false
+                };
+
+                Ok(Plan::ReclusterTable(Box::new(ReclusterPlan {
+                    catalog,
+                    database,
+                    table,
+                    limit: limit.map(|v| v as usize),
+                    selection: selection.clone(),
+                    is_final: *is_final,
+                    need_final_vacuum,
+                })))
+            }
             AlterTableAction::FlashbackTo { point } => {
                 let point = self.resolve_data_travel_point(bind_context, point)?;
                 Ok(Plan::RevertTable(Box::new(RevertTablePlan {

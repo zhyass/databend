@@ -23,4 +23,7 @@ pub struct ReclusterPlan {
     pub limit: Option<usize>,
     pub selection: Option<Expr>,
     pub is_final: bool,
+    /// Whether auto vacuum was enabled when planning this RECLUSTER FINAL statement.
+    /// The interpreter consumes this once when the statement reaches its normal end.
+    pub need_final_vacuum: bool,
 }
