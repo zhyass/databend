@@ -190,7 +190,6 @@ impl Interpreter for SetOptionsInterpreter {
         let table = catalog
             .get_table(&self.ctx.get_tenant(), database, table_name)
             .await?;
-
         if let Some(mode) = self.plan.set_options.get(OPT_KEY_WRITE_DISTRIBUTION_MODE) {
             let mode = mode.parse::<WriteDistributionMode>()?;
             if mode == WriteDistributionMode::Hash
