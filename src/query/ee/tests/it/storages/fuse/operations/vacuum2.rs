@@ -29,6 +29,7 @@ use databend_query::sessions::QueryContext;
 use databend_query::sessions::TableContextTableAccess;
 use databend_query::test_kits::TestFixture;
 use databend_query::test_kits::execute_command;
+use databend_query::test_kits::query_count;
 use databend_storages_common_io::dedup_file_locations;
 use databend_storages_common_table_meta::meta::CompactSegmentInfo;
 use futures::TryStreamExt;
@@ -125,6 +126,121 @@ async fn test_vacuum2_all() -> anyhow::Result<()> {
 
     check_files_left(&ctx, storage_root, "db1", "t1").await?;
     check_files_left(&ctx, storage_root, "default", "t1").await?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_vacuum2_preserves_clone_only_data() -> anyhow::Result<()> {
+    let fixture = TestFixture::setup_with_custom(EESetup::new()).await?;
+    fixture
+        .default_session()
+        .get_settings()
+        .set_data_retention_time_in_days(0)?;
+
+    let database = fixture.default_db_name();
+    let source_name = fixture.default_table_name();
+    let clone_name = format!("{}_vacuum_clone", source_name);
+    fixture.create_default_database().await?;
+    fixture
+        .execute_command(&format!("CREATE TABLE {database}.{source_name} (c INT)"))
+        .await?;
+    fixture
+        .execute_command(&format!("INSERT INTO {database}.{source_name} VALUES (1)"))
+        .await?;
+    fixture
+        .execute_command(&format!(
+            "CREATE TABLE {database}.{clone_name} CLONE {database}.{source_name}"
+        ))
+        .await?;
+
+    let ctx = fixture.new_query_ctx().await?;
+    let catalog = ctx.get_default_catalog()?;
+    let tenant = ctx.get_tenant();
+    let clone = catalog.get_table(&tenant, &database, &clone_name).await?;
+    let clone_fuse = FuseTable::try_from_table(clone.as_ref())?;
+    let clone_snapshot = clone_fuse
+        .read_table_snapshot()
+        .await?
+        .expect("clone must have an anchor snapshot");
+    assert_eq!(clone_snapshot.segments.len(), 1);
+    let clone_only_segment = clone_snapshot.segments[0].clone();
+    let segment = SegmentsIO::read_compact_segment(
+        clone_fuse.get_operator(),
+        clone_only_segment.clone(),
+        clone.schema(),
+        false,
+    )
+    .await?;
+    let clone_only_blocks = segment
+        .block_metas()?
+        .iter()
+        .map(|block| block.location.0.clone())
+        .collect::<Vec<_>>();
+    assert!(!clone_only_blocks.is_empty());
+
+    // Make the source head disjoint from the cloned snapshot. The old source segment and blocks
+    // are now reachable only through clone metadata.
+    fixture
+        .execute_command(&format!("TRUNCATE TABLE {database}.{source_name}"))
+        .await?;
+    fixture
+        .execute_command(&format!("INSERT INTO {database}.{source_name} VALUES (2)"))
+        .await?;
+    let source = catalog.get_table(&tenant, &database, &source_name).await?;
+    let source_fuse = FuseTable::try_from_table(source.as_ref())?;
+    let source_snapshot = source_fuse
+        .read_table_snapshot()
+        .await?
+        .expect("source must have a post-truncate snapshot");
+    assert!(!source_snapshot.segments.contains(&clone_only_segment));
+
+    fixture
+        .execute_command(&format!("VACUUM TABLE {database}.{source_name}"))
+        .await?;
+
+    assert!(
+        clone_fuse
+            .get_operator_ref()
+            .exists(&clone_only_segment.0)
+            .await?
+    );
+    for block in clone_only_blocks {
+        assert!(clone_fuse.get_operator_ref().exists(&block).await?);
+    }
+    assert_eq!(
+        query_count(
+            fixture
+                .execute_query(&format!(
+                    "SELECT count() FROM {database}.{clone_name} WHERE c = 1"
+                ))
+                .await?
+        )
+        .await?,
+        1
+    );
+    assert_eq!(
+        query_count(
+            fixture
+                .execute_query(&format!(
+                    "SELECT count() FROM {database}.{source_name} WHERE c = 2"
+                ))
+                .await?
+        )
+        .await?,
+        1
+    );
+    assert_eq!(
+        query_count(
+            fixture
+                .execute_query(&format!(
+                    "SELECT count() FROM {database}.{source_name} WHERE c = 1"
+                ))
+                .await?
+        )
+        .await?,
+        0
+    );
 
     Ok(())
 }

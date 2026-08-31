@@ -560,6 +560,17 @@ impl Catalog for MutableCatalog {
         Ok(res)
     }
 
+    async fn list_clone_group_table_metas(
+        &self,
+        clone_group_id: u64,
+    ) -> Result<Vec<(u64, Option<u64>, SeqV<TableMeta>)>> {
+        self.ctx
+            .meta
+            .list_clone_group_table_metas(clone_group_id)
+            .await
+            .map_err(ErrorCode::from)
+    }
+
     async fn get_mv_definition(
         &self,
         tenant: &Tenant,

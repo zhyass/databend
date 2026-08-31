@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::HashMap;
+
 use chrono::Utc;
 use databend_common_meta_app::app_error::AppError;
 use databend_common_meta_app::app_error::ReferenceAlreadyExists;
@@ -23,9 +25,12 @@ use databend_common_meta_app::schema::CreateTableTagReq;
 use databend_common_meta_app::schema::DropTableTagReq;
 use databend_common_meta_app::schema::GetTableTagReq;
 use databend_common_meta_app::schema::ListTableTagsReq;
+use databend_common_meta_app::schema::OPT_KEY_CLONE_GROUP_ID;
+use databend_common_meta_app::schema::TableCloneByGroupIdent;
 use databend_common_meta_app::schema::TableId;
 use databend_common_meta_app::schema::TableIdTagName;
 use databend_common_meta_app::schema::TableLvtCheck;
+use databend_common_meta_app::schema::TableMeta;
 use databend_common_meta_app::schema::TableTag;
 use databend_common_meta_app::schema::least_visible_time_ident::LeastVisibleTimeIdent;
 use databend_meta_client::kvapi;
@@ -145,8 +150,28 @@ where
                 txn_cond_seq(&key_table_id, Eq, seq_table_meta.seq),
                 // Tag must not already exist.
                 txn_cond_seq(&key_tag, Eq, 0),
-                // Check table lvt.
-                build_lvt_condition(self, table_id, &req.lvt_check).await?,
+                // Check the stable clone-group LVT.
+                build_lvt_condition(
+                    self,
+                    seq_table_meta
+                        .data
+                        .options
+                        .get(OPT_KEY_CLONE_GROUP_ID)
+                        .map(|value| value.parse::<u64>())
+                        .transpose()
+                        .map_err(|err| {
+                            KVAppError::AppError(
+                                TableSnapshotExpired::new(
+                                    table_id,
+                                    format!("invalid clone_group_id: {err}"),
+                                )
+                                .into(),
+                            )
+                        })?
+                        .unwrap_or(table_id),
+                    &req.lvt_check,
+                )
+                .await?,
             ];
 
             let txn = TxnRequest::new(conditions, vec![txn_put_pb(&key_tag, &table_tag)]);
@@ -155,6 +180,47 @@ where
                 return Ok(());
             }
         }
+    }
+
+    /// List existing table metadata and direct-source lineage in a zero-copy clone group.
+    ///
+    /// The base table ID equals the group ID and therefore has no binding record. Clone members
+    /// are discovered from `__fd_table_clone_by_group/<group_id>/...`. Stale bindings are ignored;
+    /// GC removes them transactionally with the corresponding TableMeta.
+    #[fastrace::trace]
+    async fn list_clone_group_table_metas(
+        &self,
+        clone_group_id: u64,
+    ) -> Result<Vec<(u64, Option<u64>, SeqV<TableMeta>)>, KVAppError> {
+        let prefix = DirName::new(TableCloneByGroupIdent::new(clone_group_id, 0));
+        let bindings = self.list_pb_vec(ListOptions::unlimited(&prefix)).await?;
+        let mut direct_sources = HashMap::with_capacity(bindings.len());
+        let mut table_ids = Vec::with_capacity(bindings.len() + 1);
+        table_ids.push(clone_group_id);
+        for (ident, binding) in bindings {
+            if ident.clone_table_id != clone_group_id {
+                table_ids.push(ident.clone_table_id);
+                direct_sources.insert(ident.clone_table_id, binding.data.source_table_id);
+            }
+        }
+        table_ids.sort_unstable();
+        table_ids.dedup();
+
+        let metas = self
+            .get_pb_vec(table_ids.iter().copied().map(TableId::new))
+            .await?;
+        Ok(metas
+            .into_iter()
+            .filter_map(|(ident, meta)| {
+                meta.map(|meta| {
+                    (
+                        ident.table_id,
+                        direct_sources.get(&ident.table_id).copied(),
+                        meta,
+                    )
+                })
+            })
+            .collect())
     }
 
     /// Drop a table tag.

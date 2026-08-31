@@ -18,11 +18,13 @@ use databend_common_config::MetaConfig;
 use databend_common_meta_api::kv_pb_api::KVPbApi;
 use databend_common_meta_app::principal::OwnershipObject;
 use databend_common_meta_app::principal::TenantOwnershipObjectIdent;
+use databend_common_meta_app::schema::TableId;
 use databend_common_meta_store::MetaStore;
 use databend_common_meta_store::MetaStoreProvider;
 use databend_meta_runtime::DatabendRuntime;
 use databend_query::sessions::TableContextTableAccess;
 use databend_query::test_kits::*;
+use futures::TryStreamExt;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fuse_db_table_create_replace_clean_ownership_key() -> anyhow::Result<()> {
@@ -133,6 +135,54 @@ async fn test_fuse_db_table_create_replace_clean_ownership_key() -> anyhow::Resu
         let db_ownership_key = TenantOwnershipObjectIdent::new(tenant.clone(), table_ownership);
         let v = meta.get_pb(&db_ownership_key).await?;
         assert!(v.is_some());
+
+        // Staged CREATE OR REPLACE ... AS SELECT must atomically retire the previous table and
+        // transfer ownership when it publishes the CTAS result.
+        let ctas_old_id = second_create_id;
+        let ctas_old_ownership = db_ownership_key;
+        fixture
+            .execute_command(&format!(
+                "create or replace table {}.{}.{} as select 7 as id",
+                catalog_name, db_name, tbl_name
+            ))
+            .await?;
+        let ctas_table = db.get_table(tbl_name).await?;
+        let ctas_table_id = ctas_table.get_table_info().ident.table_id;
+        assert_ne!(ctas_table_id, ctas_old_id);
+        assert!(meta.get_pb(&ctas_old_ownership).await?.is_none());
+        assert!(
+            meta.get_pb(&TableId::new(ctas_old_id))
+                .await?
+                .expect("replaced CTAS table must remain in history")
+                .data
+                .drop_on
+                .is_some()
+        );
+        let ctas_ownership =
+            TenantOwnershipObjectIdent::new(tenant.clone(), OwnershipObject::Table {
+                catalog_name: catalog_name.clone(),
+                db_id: db.get_db_info().database_id.db_id,
+                table_id: ctas_table_id,
+            });
+        assert!(meta.get_pb(&ctas_ownership).await?.is_some());
+        let blocks = fixture
+            .execute_query(&format!(
+                "select id from {}.{}.{}",
+                catalog_name, db_name, tbl_name
+            ))
+            .await?
+            .try_collect::<Vec<_>>()
+            .await?;
+        databend_common_expression::block_debug::assert_blocks_sorted_eq(
+            vec![
+                "+----------+",
+                "| Column 0 |",
+                "+----------+",
+                "| 7        |",
+                "+----------+",
+            ],
+            &blocks,
+        );
     }
 
     // test create or replace database

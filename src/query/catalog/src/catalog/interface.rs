@@ -267,6 +267,16 @@ pub trait Catalog: DynClone + Send + Sync + Debug {
     /// Get the table meta by table id.
     async fn get_table_meta_by_id(&self, table_id: u64) -> Result<Option<SeqV<TableMeta>>>;
 
+    /// List existing table metadata roots and direct-source lineage in a zero-copy clone group.
+    async fn list_clone_group_table_metas(
+        &self,
+        _clone_group_id: u64,
+    ) -> Result<Vec<(u64, Option<u64>, SeqV<TableMeta>)>> {
+        Err(ErrorCode::Unimplemented(
+            "'list_clone_group_table_metas' not implemented",
+        ))
+    }
+
     /// Get a materialized-view definition by its table ID.
     async fn get_mv_definition(
         &self,

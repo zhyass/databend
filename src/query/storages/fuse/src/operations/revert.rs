@@ -58,13 +58,21 @@ impl FuseTable {
         let base_version = self.table_info.ident.seq;
         let table_id = self.table_info.ident.table_id;
         let tenant = ctx.get_tenant();
+        let target_snapshot = table_reverting_to.read_table_snapshot().await?;
+        let lvt_check = FuseTable::build_clone_lvt_check(
+            &self.table_info,
+            &tenant,
+            target_snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.timestamp),
+        )?;
         let catalog = ctx.get_catalog(self.table_info.catalog()).await?;
         let req = UpdateTableMetaReq {
             table_id,
             seq: MatchSeq::Exact(base_version),
             new_table_meta: table_meta_to_be_committed.clone(),
             base_snapshot_location: self.snapshot_loc(),
-            lvt_check: None,
+            lvt_check,
         };
 
         // 4. let's roll

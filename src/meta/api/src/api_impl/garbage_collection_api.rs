@@ -40,10 +40,12 @@ use databend_common_meta_app::schema::IndexNameIdent;
 use databend_common_meta_app::schema::ListIndexesReq;
 use databend_common_meta_app::schema::MVDefinitionIdent;
 use databend_common_meta_app::schema::MVSourceBindingVersionIdent;
+use databend_common_meta_app::schema::OPT_KEY_CLONE_GROUP_ID;
 use databend_common_meta_app::schema::ObjectTagIdRef;
 use databend_common_meta_app::schema::ObjectTagIdRefIdent;
 use databend_common_meta_app::schema::SourceTableMV;
 use databend_common_meta_app::schema::SourceTableMVIdent;
+use databend_common_meta_app::schema::TableCloneByGroupIdent;
 use databend_common_meta_app::schema::TableCopiedFileNameIdent;
 use databend_common_meta_app::schema::TableId;
 use databend_common_meta_app::schema::TableIdHistoryIdent;
@@ -56,6 +58,7 @@ use databend_common_meta_app::schema::VacuumWatermark;
 use databend_common_meta_app::schema::index_id_ident::IndexIdIdent;
 use databend_common_meta_app::schema::index_id_to_name_ident::IndexIdToNameIdent;
 use databend_common_meta_app::schema::is_materialized_view_engine;
+use databend_common_meta_app::schema::least_visible_time_ident::LeastVisibleTimeIdent;
 use databend_common_meta_app::schema::table_niv::TableNIV;
 use databend_common_meta_app::schema::vacuum_watermark_ident::VacuumWatermarkIdent;
 use databend_common_meta_app::tenant::Tenant;
@@ -82,6 +85,7 @@ use crate::kv_app_error::KVAppError;
 use crate::kv_pb_api::KVPbApi;
 use crate::kv_pb_crud_api::KVPbCrudApi;
 use crate::txn_backoff::txn_backoff;
+use crate::txn_condition_util::txn_cond_eq_keys_with_prefix;
 use crate::txn_condition_util::txn_cond_eq_seq;
 use crate::txn_core_util::send_txn;
 use crate::txn_core_util::txn_delete_exact;
@@ -533,10 +537,22 @@ async fn gc_dropped_db_by_id(
         .await?;
 
     let mut txn = TxnRequest::default();
+    let mut gc_table_ids = HashSet::new();
+    let mut gc_clone_group_ids = HashSet::new();
 
     for (ident, table_history) in table_history_items {
         for tb_id in table_history.id_list.iter() {
             let table_id_ident = TableId { table_id: *tb_id };
+            gc_table_ids.insert(*tb_id);
+            if let Some(seq_meta) = kv_api.get_pb(&table_id_ident).await?
+                && let Some(group_id) = seq_meta
+                    .data
+                    .options
+                    .get(OPT_KEY_CLONE_GROUP_ID)
+                    .and_then(|value| value.parse::<u64>().ok())
+            {
+                gc_clone_group_ids.insert(group_id);
+            }
 
             let num_removed_copied_files =
                 remove_copied_files_for_dropped_table(kv_api, &table_id_ident).await?;
@@ -555,6 +571,42 @@ async fn gc_dropped_db_by_id(
         txn.condition
             .push(txn_cond_eq_seq(&ident, table_history.seq));
         txn.if_then.push(txn_del(&ident));
+    }
+
+    // Each member still sees the other members before this batch transaction commits, so the
+    // per-table cleanup above intentionally preserves the shared LVT. Remove it here when every
+    // existing member of a group is part of this database-GC batch. Existing member TableMeta
+    // sequences are already transaction conditions, and the prefix count prevents a concurrent
+    // clone publication from adding a new member while the LVT is removed.
+    for group_id in gc_clone_group_ids {
+        let binding_dir = DirName::new(TableCloneByGroupIdent::new(group_id, 0));
+        let bindings = kv_api
+            .list_pb_vec(ListOptions::unlimited(&binding_dir))
+            .await?;
+        let binding_count = bindings.len() as u64;
+        let mut member_ids = HashSet::from([group_id]);
+        member_ids.extend(bindings.iter().map(|(ident, _)| ident.clone_table_id));
+
+        let mut existing_member_count = 0;
+        let mut has_member_outside_batch = false;
+        for member_id in member_ids {
+            if kv_api.get_pb(&TableId::new(member_id)).await?.is_some() {
+                existing_member_count += 1;
+                if !gc_table_ids.contains(&member_id) {
+                    has_member_outside_batch = true;
+                    break;
+                }
+            }
+        }
+
+        // More than one existing member is the case that per-table cleanup cannot resolve by
+        // itself. Single-member groups are handled there without duplicating transaction ops.
+        if existing_member_count > 1 && !has_member_outside_batch {
+            txn.condition
+                .push(txn_cond_eq_keys_with_prefix(&binding_dir, binding_count));
+            txn.if_then
+                .push(txn_del(&LeastVisibleTimeIdent::new(tenant, group_id)));
+        }
     }
 
     txn.condition
@@ -816,6 +868,51 @@ async fn remove_data_for_dropped_table(
         table_id.table_id,
     )));
 
+    if let Some(group_id) = seq_meta
+        .data
+        .options
+        .get(OPT_KEY_CLONE_GROUP_ID)
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        txn.if_then.push(txn_del(&TableCloneByGroupIdent::new(
+            group_id,
+            table_id.table_id,
+        )));
+
+        // Remove the stable group LVT only when this is the last TableMeta still belonging to the
+        // group. In the common per-table GC path, the last member observes all earlier members as
+        // gone. Keeping an LVT longer is harmless; deleting it while another member exists is not.
+        let mut has_other_member = group_id != table_id.table_id
+            && kv_api.get_pb(&TableId::new(group_id)).await?.is_some();
+        let binding_dir = DirName::new(TableCloneByGroupIdent::new(group_id, 0));
+        if !has_other_member {
+            let bindings = kv_api
+                .list_pb_vec(ListOptions::unlimited(&binding_dir))
+                .await?;
+            let binding_count = bindings.len() as u64;
+            for (binding, _) in bindings {
+                if binding.clone_table_id != table_id.table_id
+                    && kv_api
+                        .get_pb(&TableId::new(binding.clone_table_id))
+                        .await?
+                        .is_some()
+                {
+                    has_other_member = true;
+                    break;
+                }
+            }
+            if !has_other_member {
+                // A clone publish writes its binding in the same transaction as TableMeta. Guard
+                // the observed prefix cardinality so concurrent clone creation cannot race this
+                // last-member cleanup and lose the stable group LVT.
+                txn.condition
+                    .push(txn_cond_eq_keys_with_prefix(&binding_dir, binding_count));
+                txn.if_then
+                    .push(txn_del(&LeastVisibleTimeIdent::new(tenant, group_id)));
+            }
+        }
+    }
+
     txn_delete_exact(txn, table_id, seq_meta.seq);
 
     // Get id -> name mapping
@@ -856,20 +953,16 @@ async fn remove_data_for_dropped_table(
         };
 
         let table_ownership_key = TenantOwnershipObjectIdent::new(tenant, table_ownership);
-        let table_ownership_seq_meta = {
-            let seq_meta = kv_api.get_pb(&table_ownership_key).await?;
-            let Some(seq_meta) = seq_meta else {
-                let err = format!(
-                    "cannot find OwnershipInfo of object: {:?}, ",
-                    table_ownership_key.to_string_key()
-                );
-                error!("{}", err);
-                return Ok(Err(err));
-            };
-            seq_meta
-        };
-
-        txn_delete_exact(txn, &table_ownership_key, table_ownership_seq_meta.seq);
+        if let Some(table_ownership_seq_meta) = kv_api.get_pb(&table_ownership_key).await? {
+            txn_delete_exact(txn, &table_ownership_key, table_ownership_seq_meta.seq);
+        } else {
+            // Staged CTAS/clone tables receive ownership only after publication. Their permanent
+            // orphan GC must still continue through tag, policy, clone-binding and counter cleanup.
+            debug!(
+                ownership_key = table_ownership_key.to_string_key();
+                "GC table has no ownership record"
+            );
+        }
     }
 
     // Clean up table ref tags under `__fd_table_tag/<table_id>/...`.

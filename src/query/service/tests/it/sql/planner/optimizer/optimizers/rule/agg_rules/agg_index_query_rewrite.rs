@@ -79,6 +79,7 @@ fn create_table_plan(fixture: &TestFixture, format: &str) -> CreateTablePlan {
         cluster_key: None,
         table_indexes: None,
         table_constraints: None,
+        clone: None,
         attached_columns: None,
         table_partition: None,
         table_properties: None,

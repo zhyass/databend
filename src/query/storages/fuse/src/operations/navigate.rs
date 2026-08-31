@@ -215,14 +215,11 @@ impl FuseTable {
             .meta_location_generator
             .gen_snapshot_location(&snapshot.snapshot_id, format_version)?;
 
-        if self.apply_snapshot_metadata_to_meta(&mut table_info.meta, snapshot)? {
-            self.apply_navigation_metadata(&mut table_info.meta)?;
-        }
+        self.apply_snapshot_to_table_meta(&mut table_info.meta, snapshot)?;
         table_info
             .meta
             .options
             .insert(OPT_KEY_SNAPSHOT_LOCATION.to_owned(), loc);
-        self.apply_snapshot_statistics(&mut table_info.meta, snapshot);
 
         // let's instantiate it
         let table = FuseTable::create_without_refresh_table_info(table_info, s3_storage_class)?;
@@ -942,6 +939,20 @@ impl FuseTable {
             }
         }
 
+        Ok(())
+    }
+
+    /// Apply all snapshot-derived metadata to a table meta and validate metadata that depends on
+    /// the selected schema. This is shared by time travel and zero-copy clone publication.
+    pub fn apply_snapshot_to_table_meta(
+        &self,
+        table_meta: &mut TableMeta,
+        snapshot: &TableSnapshot,
+    ) -> Result<()> {
+        if self.apply_snapshot_metadata_to_meta(table_meta, snapshot)? {
+            self.apply_navigation_metadata(table_meta)?;
+        }
+        self.apply_snapshot_statistics(table_meta, snapshot);
         Ok(())
     }
 

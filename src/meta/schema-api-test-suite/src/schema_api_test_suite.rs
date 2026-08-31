@@ -25,6 +25,7 @@ use chrono::Duration;
 use chrono::Utc;
 use databend_common_base::runtime::Runtime;
 use databend_common_exception::ErrorCode;
+use databend_common_expression::AutoIncrementExpr;
 use databend_common_expression::TableDataType;
 use databend_common_expression::TableField;
 use databend_common_expression::TableSchema;
@@ -38,6 +39,7 @@ use databend_common_meta_api::GarbageCollectionApi;
 use databend_common_meta_api::IndexApi;
 use databend_common_meta_api::LockApi2;
 use databend_common_meta_api::MaterializedViewApi;
+use databend_common_meta_api::RefApi;
 use databend_common_meta_api::RowAccessPolicyApi;
 use databend_common_meta_api::SecurityApi;
 use databend_common_meta_api::SequenceApi;
@@ -53,15 +55,24 @@ use databend_common_meta_app::KeyWithTenant;
 use databend_common_meta_app::app_error::AppError;
 use databend_common_meta_app::app_error::TableEngineMismatch;
 use databend_common_meta_app::data_mask::CreateDatamaskReq;
+use databend_common_meta_app::data_mask::DataMaskId;
+use databend_common_meta_app::data_mask::DataMaskIdIdent;
 use databend_common_meta_app::data_mask::DataMaskNameIdent;
 use databend_common_meta_app::data_mask::DatamaskMeta;
 use databend_common_meta_app::data_mask::MaskPolicyIdTableId;
+use databend_common_meta_app::data_mask::MaskPolicyTableId;
 use databend_common_meta_app::data_mask::MaskPolicyTableIdIdent;
+use databend_common_meta_app::principal::AutoIncrementKey;
 use databend_common_meta_app::row_access_policy::CreateRowAccessPolicyReq;
+use databend_common_meta_app::row_access_policy::RowAccessPolicyId;
+use databend_common_meta_app::row_access_policy::RowAccessPolicyIdIdent;
 use databend_common_meta_app::row_access_policy::RowAccessPolicyMeta;
 use databend_common_meta_app::row_access_policy::RowAccessPolicyNameIdent;
+use databend_common_meta_app::row_access_policy::RowAccessPolicyTableId;
 use databend_common_meta_app::row_access_policy::RowAccessPolicyTableIdIdent;
 use databend_common_meta_app::row_access_policy::row_access_policy_table_id_ident::RowAccessPolicyIdTableId;
+use databend_common_meta_app::schema::AutoIncrementStorageIdent;
+use databend_common_meta_app::schema::AutoIncrementStorageValue;
 use databend_common_meta_app::schema::CatalogMeta;
 use databend_common_meta_app::schema::CatalogNameIdent;
 use databend_common_meta_app::schema::CatalogOption;
@@ -75,6 +86,7 @@ use databend_common_meta_app::schema::CreateMaterializedViewMeta;
 use databend_common_meta_app::schema::CreateOption;
 use databend_common_meta_app::schema::CreateSequenceReply;
 use databend_common_meta_app::schema::CreateSequenceReq;
+use databend_common_meta_app::schema::CreateTableCloneMeta;
 use databend_common_meta_app::schema::CreateTableIndexReq;
 use databend_common_meta_app::schema::CreateTableReply;
 use databend_common_meta_app::schema::CreateTableReq;
@@ -122,6 +134,7 @@ use databend_common_meta_app::schema::MATERIALIZED_VIEW_ENGINE;
 use databend_common_meta_app::schema::MVDefinition;
 use databend_common_meta_app::schema::MVSourceBindingVersionIdent;
 use databend_common_meta_app::schema::MarkedDeletedIndexType;
+use databend_common_meta_app::schema::OPT_KEY_CLONE_GROUP_ID;
 use databend_common_meta_app::schema::OPT_KEY_MATERIALIZED_VIEW_SOURCE_TABLE_ID;
 use databend_common_meta_app::schema::RenameDatabaseReq;
 use databend_common_meta_app::schema::RenameDictionaryReq;
@@ -134,6 +147,8 @@ use databend_common_meta_app::schema::SetTableRowAccessPolicyReq;
 use databend_common_meta_app::schema::SourceTableMV;
 use databend_common_meta_app::schema::SourceTableMVIdent;
 use databend_common_meta_app::schema::SwapTableReq;
+use databend_common_meta_app::schema::TableCloneBinding;
+use databend_common_meta_app::schema::TableCloneByGroupIdent;
 use databend_common_meta_app::schema::TableCopiedFileInfo;
 use databend_common_meta_app::schema::TableCopiedFileNameIdent;
 use databend_common_meta_app::schema::TableId;
@@ -169,6 +184,7 @@ use databend_common_meta_app::schema::sequence_storage::SequenceStorageIdent;
 use databend_common_meta_app::schema::vacuum_watermark_ident::VacuumWatermarkIdent;
 use databend_common_meta_app::tenant::Tenant;
 use databend_common_meta_app::tenant::ToTenant;
+use databend_common_meta_app::value_id::ValueId;
 use databend_meta_client::kvapi;
 use databend_meta_client::kvapi::KvApiExt;
 use databend_meta_client::kvapi::StructKey;
@@ -314,6 +330,7 @@ impl SchemaApiTestSuite {
             + TableApi
             + GarbageCollectionApi
             + MaterializedViewApi
+            + RefApi
             + 'static,
     {
         self.table_commit_table_meta(&b.build().await).await?;
@@ -327,6 +344,7 @@ impl SchemaApiTestSuite {
         self.table_create_get_drop(&b.build().await).await?;
         self.table_create_with_source_option_atomicity(&b.build().await)
             .await?;
+        self.table_clone_atomicity(&b.build().await).await?;
         self.materialized_view_lifecycle(&b.build().await).await?;
         self.table_drop_without_db_id_to_name(&b.build().await)
             .await?;
@@ -1688,6 +1706,7 @@ impl SchemaApiTestSuite {
                 },
                 source_table_option,
                 as_dropped: false,
+                clone: None,
                 materialized_view: None,
                 table_properties: None,
                 table_partition: None,
@@ -1794,6 +1813,319 @@ impl SchemaApiTestSuite {
         Ok(())
     }
 
+    async fn table_clone_atomicity<MT>(&self, mt: &MT) -> anyhow::Result<()>
+    where MT: kvapi::KVApi<Error = MetaError> + DatabaseApi + RefApi + TableApi {
+        let mut source = DbTableHarness::new(mt, "table_clone_atomicity", "db", "source", "FUSE");
+        source.create_db().await?;
+        let tenant = source.tenant();
+        let mask_policy_id = 101;
+        let row_policy_id = 102;
+        mt.upsert_pb(&UpsertPB::insert(
+            DataMaskIdIdent::new_generic(&tenant, DataMaskId::new(mask_policy_id)),
+            DatamaskMeta {
+                args: vec![("value".to_string(), "UInt64".to_string())],
+                return_type: "UInt64".to_string(),
+                body: "value".to_string(),
+                comment: None,
+                create_on: Utc::now(),
+                update_on: None,
+            },
+        ))
+        .await?;
+        mt.upsert_pb(&UpsertPB::insert(
+            RowAccessPolicyIdIdent::new_generic(&tenant, RowAccessPolicyId::new(row_policy_id)),
+            RowAccessPolicyMeta {
+                args: vec![("value".to_string(), "UInt64".to_string())],
+                body: "true".to_string(),
+                comment: None,
+                create_on: Utc::now(),
+                update_on: None,
+            },
+        ))
+        .await?;
+
+        let auto_increment_expr = AutoIncrementExpr {
+            column_id: 0,
+            start: 3,
+            step: 1,
+            is_ordered: true,
+        };
+        let (source_id, source_meta) = source
+            .create_table_with(
+                |mut meta| {
+                    meta.schema = Arc::new(TableSchema::new(vec![
+                        TableField::new("number", TableDataType::Number(NumberDataType::UInt64))
+                            .with_auto_increment_expr(Some(auto_increment_expr.clone())),
+                    ]));
+                    meta.column_mask_policy_columns_ids
+                        .insert(0, SecurityPolicyColumnMap::new(mask_policy_id, vec![0]));
+                    meta.row_access_policy_columns_ids =
+                        Some(SecurityPolicyColumnMap::new(row_policy_id, vec![0]));
+                    meta
+                },
+                |req| req,
+            )
+            .await?;
+        mt.upsert_pb(&UpsertPB::insert(
+            MaskPolicyTableIdIdent::new_generic(&tenant, MaskPolicyIdTableId {
+                policy_id: mask_policy_id,
+                table_id: source_id,
+            }),
+            MaskPolicyTableId,
+        ))
+        .await?;
+        mt.upsert_pb(&UpsertPB::insert(
+            RowAccessPolicyTableIdIdent::new_generic(&tenant, RowAccessPolicyIdTableId {
+                policy_id: row_policy_id,
+                table_id: source_id,
+            }),
+            RowAccessPolicyTableId,
+        ))
+        .await?;
+        let db_name = source.db_name();
+        let snapshot_time = Utc::now();
+        let source_counter = AutoIncrementStorageIdent::new_generic(
+            &tenant,
+            AutoIncrementKey::new(source_id, auto_increment_expr.column_id),
+        );
+        mt.upsert_pb(&UpsertPB::update(
+            source_counter.clone(),
+            ValueId::<AutoIncrementStorageValue>::new(7),
+        ))
+        .await?;
+        let clone_table_meta = source_meta.clone();
+
+        let clone_req = |name: &str,
+                         source_table_id: u64,
+                         source_table_seq: MatchSeq,
+                         clone_group_id: u64,
+                         snapshot_timestamp: DateTime<Utc>| {
+            let mut table_meta = clone_table_meta.clone();
+            table_meta.drop_on = Some(Utc::now());
+            table_meta.options.insert(
+                OPT_KEY_CLONE_GROUP_ID.to_string(),
+                clone_group_id.to_string(),
+            );
+            CreateTableReq {
+                create_option: CreateOption::Create,
+                catalog_name: None,
+                name_ident: TableNameIdent::new(&tenant, &db_name, name),
+                table_meta,
+                source_table_option: None,
+                as_dropped: true,
+                clone: Some(CreateTableCloneMeta {
+                    source_table_id,
+                    source_table_seq,
+                    clone_group_id,
+                    snapshot_timestamp: Some(snapshot_timestamp),
+                }),
+                materialized_view: None,
+                table_properties: None,
+                table_partition: None,
+            }
+        };
+        let commit_clone = |reply: &CreateTableReply, name: &str| CommitTableMetaReq {
+            name_ident: TableNameIdent::new(&tenant, &db_name, name),
+            db_id: reply.db_id,
+            table_id: reply.table_id,
+            prev_table_id: reply.prev_table_id,
+            orphan_table_name: reply.orphan_table_name.clone(),
+        };
+
+        // Creating the first clone atomically initializes the source group and target binding.
+        let source_before = source.get_table().await?;
+        let first = mt
+            .create_table(clone_req(
+                "clone_1",
+                source_id,
+                MatchSeq::Exact(source_before.ident.seq),
+                source_id,
+                snapshot_time,
+            ))
+            .await?;
+        let first_binding = TableCloneByGroupIdent::new(source_id, first.table_id);
+        assert_eq!(
+            mt.get_pb(&first_binding).await?.unwrap().data,
+            TableCloneBinding {
+                source_table_id: source_id,
+            }
+        );
+        let source_after = source.get_table().await?;
+        assert!(source_after.ident.seq > source_before.ident.seq);
+        assert_eq!(
+            source_after.meta.options.get(OPT_KEY_CLONE_GROUP_ID),
+            Some(&source_id.to_string())
+        );
+        assert!(
+            mt.get_pb(&MaskPolicyTableIdIdent::new_generic(
+                &tenant,
+                MaskPolicyIdTableId {
+                    policy_id: mask_policy_id,
+                    table_id: first.table_id,
+                },
+            ))
+            .await?
+            .is_some()
+        );
+        assert!(
+            mt.get_pb(&RowAccessPolicyTableIdIdent::new_generic(
+                &tenant,
+                RowAccessPolicyIdTableId {
+                    policy_id: row_policy_id,
+                    table_id: first.table_id,
+                },
+            ))
+            .await?
+            .is_some()
+        );
+        let first_counter = AutoIncrementStorageIdent::new_generic(
+            &tenant,
+            AutoIncrementKey::new(first.table_id, auto_increment_expr.column_id),
+        );
+        assert_eq!(*mt.get_pb(&first_counter).await?.unwrap().data, 7);
+        mt.upsert_pb(&UpsertPB::update(
+            first_counter.clone(),
+            ValueId::<AutoIncrementStorageValue>::new(10),
+        ))
+        .await?;
+        assert_eq!(*mt.get_pb(&source_counter).await?.unwrap().data, 7);
+
+        mt.commit_table_meta(commit_clone(&first, "clone_1"))
+            .await?;
+        let first_info = source.get_table_by_name("clone_1").await?;
+
+        // Clone-of-clone keeps the stable group, copies its source's current auto-increment
+        // counter, and requires the source clone binding.
+        let second = mt
+            .create_table(clone_req(
+                "clone_2",
+                first.table_id,
+                MatchSeq::Exact(first_info.ident.seq),
+                source_id,
+                snapshot_time,
+            ))
+            .await?;
+        let second_binding = TableCloneByGroupIdent::new(source_id, second.table_id);
+        assert_eq!(
+            mt.get_pb(&second_binding).await?.unwrap().data,
+            TableCloneBinding {
+                source_table_id: first.table_id,
+            }
+        );
+        assert!(
+            mt.get_pb(&MaskPolicyTableIdIdent::new_generic(
+                &tenant,
+                MaskPolicyIdTableId {
+                    policy_id: mask_policy_id,
+                    table_id: second.table_id,
+                },
+            ))
+            .await?
+            .is_some()
+        );
+        assert!(
+            mt.get_pb(&RowAccessPolicyTableIdIdent::new_generic(
+                &tenant,
+                RowAccessPolicyIdTableId {
+                    policy_id: row_policy_id,
+                    table_id: second.table_id,
+                },
+            ))
+            .await?
+            .is_some()
+        );
+        let second_counter = AutoIncrementStorageIdent::new_generic(
+            &tenant,
+            AutoIncrementKey::new(second.table_id, auto_increment_expr.column_id),
+        );
+        assert_eq!(*mt.get_pb(&second_counter).await?.unwrap().data, 10);
+        assert_eq!(*mt.get_pb(&first_counter).await?.unwrap().data, 10);
+        assert_eq!(*mt.get_pb(&source_counter).await?.unwrap().data, 7);
+        mt.commit_table_meta(commit_clone(&second, "clone_2"))
+            .await?;
+
+        let members = mt.list_clone_group_table_metas(source_id).await?;
+        let member_ids = members
+            .iter()
+            .map(|(table_id, _, _)| *table_id)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            member_ids,
+            BTreeSet::from([source_id, first.table_id, second.table_id])
+        );
+        let direct_sources = members
+            .into_iter()
+            .map(|(table_id, direct_source, _)| (table_id, direct_source))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(direct_sources.get(&source_id), Some(&None));
+        assert_eq!(direct_sources.get(&first.table_id), Some(&Some(source_id)));
+        assert_eq!(
+            direct_sources.get(&second.table_id),
+            Some(&Some(first.table_id))
+        );
+
+        // A stale source sequence rejects the transaction before any target metadata or binding
+        // becomes visible.
+        let members_before_failure = mt.list_clone_group_table_metas(source_id).await?;
+        let err = mt
+            .create_table(clone_req(
+                "stale_clone",
+                source_id,
+                MatchSeq::Exact(source_after.ident.seq + 100),
+                source_id,
+                snapshot_time,
+            ))
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            KVAppError::AppError(AppError::TableVersionMismatched(_))
+        ));
+        assert!(
+            mt.get_table(GetTableReq::new(&tenant, &db_name, "stale_clone"))
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            mt.list_clone_group_table_metas(source_id).await?,
+            members_before_failure
+        );
+
+        // The stable group LVT rejects a historical clone, also without partial metadata.
+        let lvt = snapshot_time + Duration::seconds(1);
+        mt.set_table_lvt(
+            &LeastVisibleTimeIdent::new(&tenant, source_id),
+            &LeastVisibleTime::new(lvt),
+        )
+        .await?;
+        let current_source = source.get_table().await?;
+        let err = mt
+            .create_table(clone_req(
+                "expired_clone",
+                source_id,
+                MatchSeq::Exact(current_source.ident.seq),
+                source_id,
+                snapshot_time,
+            ))
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            KVAppError::AppError(AppError::TableSnapshotExpired(_))
+        ));
+        assert!(
+            mt.get_table(GetTableReq::new(&tenant, &db_name, "expired_clone"))
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            mt.list_clone_group_table_metas(source_id).await?,
+            members_before_failure
+        );
+
+        Ok(())
+    }
+
     async fn materialized_view_lifecycle<
         MT: kvapi::KVApi<Error = MetaError>
             + DatabaseApi
@@ -1865,6 +2197,7 @@ impl SchemaApiTestSuite {
                 table_meta,
                 source_table_option: None,
                 as_dropped: false,
+                clone: None,
                 materialized_view: Some(CreateMaterializedViewMeta {
                     definition: definition.clone(),
                     expected_source_generation: source_binding_generation,
@@ -2278,6 +2611,7 @@ impl SchemaApiTestSuite {
                 table_meta: table_meta(created_on),
                 source_table_option: None,
                 as_dropped: false,
+                clone: None,
                 materialized_view: None,
                 table_properties: None,
                 table_partition: None,
@@ -2397,6 +2731,7 @@ impl SchemaApiTestSuite {
                 table_meta: table_meta(created_on),
                 source_table_option: None,
                 as_dropped: false,
+                clone: None,
                 materialized_view: None,
                 table_properties: None,
                 table_partition: None,
@@ -2671,6 +3006,7 @@ impl SchemaApiTestSuite {
                 },
                 source_table_option: None,
                 as_dropped: false,
+                clone: None,
                 materialized_view: None,
                 table_properties: None,
                 table_partition: None,
@@ -2717,6 +3053,7 @@ impl SchemaApiTestSuite {
                 table_meta: tbl_meta,
                 source_table_option: None,
                 as_dropped: true,
+                clone: None,
                 materialized_view: None,
                 table_properties: None,
                 table_partition: None,
@@ -5027,6 +5364,7 @@ impl SchemaApiTestSuite {
             table_meta: create_table_meta.clone(),
             source_table_option: None,
             as_dropped: false,
+            clone: None,
             materialized_view: None,
             table_properties: None,
             table_partition: None,
@@ -5856,6 +6194,7 @@ impl SchemaApiTestSuite {
                     table_meta: table_meta(created_on),
                     source_table_option: None,
                     as_dropped: false,
+                    clone: None,
                     materialized_view: None,
                     table_properties: None,
                     table_partition: None,
@@ -6346,6 +6685,7 @@ impl SchemaApiTestSuite {
             table_meta: drop_table_meta(created_on),
             source_table_option: None,
             as_dropped: true,
+            clone: None,
             materialized_view: None,
             table_properties: None,
             table_partition: None,
@@ -6468,6 +6808,7 @@ impl SchemaApiTestSuite {
                 table_meta: table_meta(created_on),
                 source_table_option: None,
                 as_dropped: true,
+                clone: None,
                 materialized_view: None,
                 table_properties: None,
                 table_partition: None,
@@ -6490,12 +6831,16 @@ impl SchemaApiTestSuite {
                 table_meta: drop_table_meta(created_on),
                 source_table_option: None,
                 as_dropped: true,
+                clone: None,
                 materialized_view: None,
                 table_properties: None,
                 table_partition: None,
             };
 
             let create_table_as_dropped_resp = mt.create_table(create_table_req.clone()).await?;
+            let previous_table_id = create_table_as_dropped_resp
+                .prev_table_id
+                .expect("replacement must capture the previous visible table");
 
             let commit_table_req = CommitTableMetaReq {
                 name_ident: create_table_req.name_ident.clone(),
@@ -6505,6 +6850,17 @@ impl SchemaApiTestSuite {
                 orphan_table_name: create_table_as_dropped_resp.orphan_table_name.clone(),
             };
             mt.commit_table_meta(commit_table_req).await?;
+
+            let previous = mt
+                .get_pb(&TableId::new(previous_table_id))
+                .await?
+                .expect("replaced table meta must remain in history");
+            assert!(previous.data.drop_on.is_some());
+            let visible = util.get_table_by_name(tbl_name).await?;
+            assert_eq!(
+                visible.ident.table_id,
+                create_table_as_dropped_resp.table_id
+            );
         }
 
         // verify the orphan table id list will be vacuum
@@ -6528,6 +6884,7 @@ impl SchemaApiTestSuite {
                 table_meta: drop_table_meta(created_on),
                 source_table_option: None,
                 as_dropped: true,
+                clone: None,
                 materialized_view: None,
                 table_properties: None,
                 table_partition: None,
@@ -6601,6 +6958,7 @@ impl SchemaApiTestSuite {
             table_meta: replacement_meta,
             source_table_option: None,
             as_dropped: true,
+            clone: None,
             materialized_view: None,
             table_properties: None,
             table_partition: None,
@@ -6646,6 +7004,7 @@ impl SchemaApiTestSuite {
             table_meta: replacement_meta,
             source_table_option: None,
             as_dropped: true,
+            clone: None,
             materialized_view: None,
             table_properties: None,
             table_partition: None,
@@ -6755,6 +7114,7 @@ impl SchemaApiTestSuite {
             table_meta: drop_table_meta(created_on),
             source_table_option: None,
             as_dropped: true,
+            clone: None,
             materialized_view: None,
             table_properties: None,
             table_partition: None,

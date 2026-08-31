@@ -312,6 +312,15 @@ impl Catalog for DatabaseCatalog {
         }
     }
 
+    async fn list_clone_group_table_metas(
+        &self,
+        clone_group_id: u64,
+    ) -> Result<Vec<(u64, Option<u64>, SeqV<TableMeta>)>> {
+        self.mutable_catalog
+            .list_clone_group_table_metas(clone_group_id)
+            .await
+    }
+
     async fn get_mv_definition(
         &self,
         tenant: &Tenant,
